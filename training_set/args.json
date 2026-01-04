@@ -1,0 +1,19 @@
+{
+  "sizes_1": [
+    25,
+    25,
+    25,
+    25
+  ],
+  "sizes_2": [
+    50,
+    50
+  ],
+  "p": 0.1,
+  "q": 0.02,
+  "n_samples": 1000,
+  "features": null,
+  "sequence": false,
+  "save_dir": "/home/b/skoove/compute/entropy/flow_stability/",
+  "rep": 0
+}
