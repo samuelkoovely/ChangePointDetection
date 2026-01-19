@@ -1,22 +1,8 @@
 import os
-import pandas as pd
 import numpy as np
-from scipy.sparse import (lil_matrix, dok_matrix, diags, eye, isspmatrix_csr, isspmatrix,
-                          csr_matrix, coo_matrix, csc_matrix)
-from scipy.sparse.linalg import expm, eigsh
-from scipy.linalg import expm as d_expm
-from scipy.linalg import logm as d_logm
-from scipy.sparse.csgraph import connected_components
-import gzip
-from SparseStochMat import sparse_stoch_mat, inplace_csr_row_normalize
-
-from parallel_expm import compute_subspace_expm_parallel
-
-from functools import partial
-
+from scipy.sparse import csr_matrix
 import time
-import pickle
-from math import exp
+
 
 def compute_conditional_entropy(net=None, list_T=None, lamda=None, t_start=None, t_stop=None,
                                     verbose=False,
@@ -26,56 +12,39 @@ def compute_conditional_entropy(net=None, list_T=None, lamda=None, t_start=None,
                                     time_domain=None,
                                     p0 = None):
     """
+    Compute conditional entropy values from a sequence of transition matrices.
 
-    Computes interevent transition matrices as T_k(lamda) = expm(-tau_k*lamda*L_k).
-    
-    The transition matrix T_k is saved in `self.inter_T[lamda][k]`, where 
-    self.inter_T is a dictionary with lamda as keys and lists of transition
-    matrices as values.
-    
-    will compute from self.times[self._k_start_laplacians] until 
-    self.times[self._k_stop_laplacians-1]
-    
-    the transition matrix at step k, is the probability transition matrix
-    between times[k] and times[k+1]
-    
+    For each transition matrix T in `list_T[time_domain[k]]`, this computes
+    -sum_i p0_i * sum_j T_ij * log(T_ij), and returns the running list of
+    conditional entropies (one per transition matrix, plus an initial 0).
+
     Parameters
     ----------
+    net : object, optional
+        Temporal network object used for default time_domain/p0 sizing.
+    list_T : sequence or mapping of sparse matrices
+        Transition matrices indexed by time step.
     lamda : float, optional
-        Random walk rate, dynamical resolution parameter. The default (None)
-        is 1 over the median inter event time.
+        Label for the returned dict key (formatted to 11 decimals).
     t_start : float or int, optional
-        Starting time, passed to `compute_laplacian_matrices` if the 
-        Laplacians have not yet been computed.
-        Otherwise is not used.
-        The computation starts at self.times[self._k_start_laplacians].
-        The default is None, i.e. starts at the beginning of times.
+        Unused; kept for API compatibility.
     t_stop : float or int, optional
-        Same than `t_start` but for the ending time of computations.
-        Computations stop at self.times[self._k_stop_laplacians-1].
-        Default is end of times.
+        Unused; kept for API compatibility.
     verbose : bool, optional
-        The default is False.
-    fix_tau_k : bool, optional
-        If true, all interevent times (tau_k) in the formula above are set to 1. 
-        This decouples the dynamic scale from the length of event which
-        is useful for temporal networks with instantaneous events.
-        The default is False.
-    use_sparse_stoch : bool, optional
-        Whether to use custom sparse stochastic matrix format to save the
-        inter transition matrices. Especially useful for large networks as 
-        the matrix exponential is then computed on each connected component 
-        separately (more memory efficient). The default is False.
-    dense_expm : bool, optional
-        Whether to use the dense version of the matrix exponential algorithm
-        at each time steps. Recommended for not too large networks. 
-        The inter trans. matrices are still saved as sparse scipy matrices
-        as they usually have many zero values. The default is True. Has no
-        effect is use_sparse_stoch is True.
+        Print progress every 1000 steps.
+    reverse_time : bool, optional
+        If True, iterate through `time_domain` in reverse order.
+    force_csr : bool, optional
+        Unused; kept for API compatibility.
+    time_domain : sequence of int, optional
+        Indices into `list_T`. Defaults to 1..len(net.times())-1.
+    p0 : array-like, optional
+        Initial distribution over nodes. Defaults to uniform.
 
     Returns
     -------
-    None.
+    dict
+        Dictionary keyed by formatted `lamda` containing the entropy list.
 
     """
     
@@ -122,3 +91,28 @@ def compute_conditional_entropy(net=None, list_T=None, lamda=None, t_start=None,
         print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s') 
     
     return conditional_S
+
+def conditional_entropy_of_T(T, p0):
+    """
+    Returns - sum_i p0[i] * sum_j T[i,j] log T[i,j]
+    T: scipy sparse matrix (CSR recommended)
+    p0: (n,) numpy array
+    """
+    T = T.tocsr()
+
+    # log(T.data) safely
+    logdata = np.zeros_like(T.data)
+    mask = T.data > 0
+    logdata[mask] = np.log(T.data[mask])
+
+    TlogT = csr_matrix((T.data * logdata, T.indices, T.indptr), shape=T.shape)
+    v = p0 @ TlogT
+    return -np.sum(v[np.isfinite(v)])
+
+def make_on_window_matrix_entropy_callback(p0, S_vals):
+    p0 = np.asarray(p0)
+
+    def on_window_matrix(k, Tk_window):
+        S_vals.append(conditional_entropy_of_T(Tk_window, p0))
+
+    return on_window_matrix
