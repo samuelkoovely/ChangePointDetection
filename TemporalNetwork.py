@@ -1100,7 +1100,9 @@ class ContTempNetwork(object):
             else:
                 t = self.times[self.times <= t].max()
             
-        k = int(np.where(self.times == t)[0])
+        idx = np.where(self.times == t)[0]
+        k = idx.item()
+        #k = int(np.where(self.times == t)[0])
         
         return t, k
         
@@ -1809,36 +1811,97 @@ class ContTempNetwork(object):
     #     if verbose:
     #         print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
 
-    def compute_transition_matrices_sliding_timewindow(self, lamda=None,
-                                                verbose=False,
-                                                save_intermediate=True,
-                                                reverse_time=False,
-                                                force_csr=False,
-                                                tol=None,
-                                                window_timelength=None):
-        """ Compute transition matrices using a sliding window approach.
-            Saves them in a dict of lists `self.T[lamda]` where `self.T[lamda][k]`
-            is the product of interevent transition matrices from t_{k-window_timelength} to t_k.
+    # def compute_transition_matrices_sliding_timewindow(self, lamda=None,
+    #                                             verbose=False,
+    #                                             save_intermediate=True,
+    #                                             reverse_time=False,
+    #                                             force_csr=False,
+    #                                             tol=None,
+    #                                             window_timelength=None):
+    #     """ Compute transition matrices using a sliding window approach.
+    #         Saves them in a dict of lists `self.T[lamda]` where `self.T[lamda][k]`
+    #         is the product of interevent transition matrices from t_{k-window_timelength} to t_k.
         
-            Parameters:
-            - lamda: parameter for interevent matrices.
-            - t_start, t_stop: time range for computation.
-            - verbose: flag for detailed logging.
-            - save_intermediate: whether to save intermediate results.
-            - reverse_time: if True, computes in reverse time.
-            - force_csr: forces computation in CSR format.
-            - tol: tolerance for setting matrix elements to zero.
-            - window_timelength: size of the sliding window (must be provided).
+    #         Parameters:
+    #         - lamda: parameter for interevent matrices.
+    #         - t_start, t_stop: time range for computation.
+    #         - verbose: flag for detailed logging.
+    #         - save_intermediate: whether to save intermediate results.
+    #         - reverse_time: if True, computes in reverse time.
+    #         - force_csr: forces computation in CSR format.
+    #         - tol: tolerance for setting matrix elements to zero.
+    #         - window_timelength: size of the sliding window (must be provided).
+    #     """
+
+    #     if not hasattr(self, 'inter_T') or lamda not in self.inter_T.keys():
+    #         raise Exception("Compute inter_T first.")
+
+    #     if not hasattr(self, 'window_T'):
+    #         self.window_T = dict()
+
+    #     if window_timelength is None or window_timelength <= 0:
+    #         raise ValueError("window_timelength must be a positive integer.")
+
+    #     if reverse_time:
+    #         raise Exception("Not implemented yet.")
+    #     else:
+    #         considered_times = self.times[self.times < self.times[-1] - window_timelength]
+    #         k_range = range(len(considered_times))
+
+    #     if lamda not in self.window_T.keys():
+    #         self.window_T[lamda] = []
+
+    #     if verbose:
+    #         print('PID ', os.getpid(), ' : ', 'Computing sliding window transition matrices')
+
+    #     t0 = time.time()
+
+    #     for k in k_range:
+    #         if verbose and not k % 1000:
+    #             print('PID ', os.getpid(), ' : ', k, ' over ', len(considered_times))
+    #             print(f'PID {os.getpid()} : {time.time() - t0:.2f}s')
+
+    #         # Compute product over the sliding window
+    #         Tk_window = self.inter_T[lamda][k]
+    #         t_rightboundary,k_rightboundary = self._get_closest_time(self.times[k] + window_timelength)
+    #         for i in range(k+1, k_rightboundary + 1):
+    #             if tol is not None:
+    #                 set_to_zeroes(self.inter_T[lamda][i], tol)
+    #                 inplace_csr_row_normalize(self.inter_T[lamda][i])
+    #             Tk_window = Tk_window @ self.inter_T[lamda][i]
+
+    #         if tol is not None:
+    #             set_to_zeroes(Tk_window, tol)
+    #             inplace_csr_row_normalize(Tk_window)
+
+    #         if save_intermediate:
+    #             self.window_T[lamda].append(Tk_window)
+
+    #     t_end = time.time() - t0
+
+    #     if verbose:
+    #         print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
+
+    def compute_transition_matrices_sliding_timewindow(self, lamda=None,
+                                                   verbose=False,
+                                                   save_intermediate=True,
+                                                   reverse_time=False,
+                                                   force_csr=False,
+                                                   tol=None,
+                                                   window_timelength=None,
+                                                   on_window_matrix=None):
+        """Compute transition matrices using a sliding window approach.
+
+        If `save_intermediate=True`, saves matrices in `self.window_T[lamda]`.
+        If `on_window_matrix` is provided, calls `on_window_matrix(k, Tk_window)`
+        for each window matrix (so you can compute entropy on the fly).
         """
 
         if not hasattr(self, 'inter_T') or lamda not in self.inter_T.keys():
             raise Exception("Compute inter_T first.")
 
-        if not hasattr(self, 'window_T'):
-            self.window_T = dict()
-
         if window_timelength is None or window_timelength <= 0:
-            raise ValueError("window_timelength must be a positive integer.")
+            raise ValueError("window_timelength must be a positive number.")
 
         if reverse_time:
             raise Exception("Not implemented yet.")
@@ -1846,8 +1909,12 @@ class ContTempNetwork(object):
             considered_times = self.times[self.times < self.times[-1] - window_timelength]
             k_range = range(len(considered_times))
 
-        if lamda not in self.window_T.keys():
-            self.window_T[lamda] = []
+        # Only allocate storage if requested
+        if save_intermediate:
+            if not hasattr(self, 'window_T'):
+                self.window_T = dict()
+            if lamda not in self.window_T:
+                self.window_T[lamda] = []
 
         if verbose:
             print('PID ', os.getpid(), ' : ', 'Computing sliding window transition matrices')
@@ -1859,26 +1926,43 @@ class ContTempNetwork(object):
                 print('PID ', os.getpid(), ' : ', k, ' over ', len(considered_times))
                 print(f'PID {os.getpid()} : {time.time() - t0:.2f}s')
 
-            # Compute product over the sliding window
+            # Start window product at k
             Tk_window = self.inter_T[lamda][k]
-            t_rightboundary,k_rightboundary = self._get_closest_time(self.times[k] + window_timelength)
-            for i in range(k+1, k_rightboundary + 1):
+            if force_csr and not isspmatrix_csr(Tk_window):
+                Tk_window = Tk_window.tocsr()
+
+            # Find right boundary index for the time window
+            t_rightboundary, k_rightboundary = self._get_closest_time(self.times[k] + window_timelength)
+
+            # Multiply inter-event matrices up to boundary
+            for i in range(k + 1, k_rightboundary + 1):
+                Ti = self.inter_T[lamda][i]
+                if force_csr and not isspmatrix_csr(Ti):
+                    Ti = Ti.tocsr()
+
                 if tol is not None:
-                    set_to_zeroes(self.inter_T[lamda][i], tol)
-                    inplace_csr_row_normalize(self.inter_T[lamda][i])
-                Tk_window = Tk_window @ self.inter_T[lamda][i]
+                    set_to_zeroes(Ti, tol)
+                    inplace_csr_row_normalize(Ti)
+
+                Tk_window = Tk_window @ Ti
+
+            if force_csr and not isspmatrix_csr(Tk_window):
+                Tk_window = Tk_window.tocsr()
 
             if tol is not None:
                 set_to_zeroes(Tk_window, tol)
                 inplace_csr_row_normalize(Tk_window)
 
+            # <<< NEW: callback hook >>>
+            if on_window_matrix is not None:
+                on_window_matrix(k, Tk_window)
+
+            # Optional storage (old behavior)
             if save_intermediate:
                 self.window_T[lamda].append(Tk_window)
 
-        t_end = time.time() - t0
-
         if verbose:
-            print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
+            print('PID ', os.getpid(), ' : ', f'finished in {time.time() - t0:.2f}s')
 
     def compute_entropy(self, lamda=None, t_start=None, t_stop=None,
                                     verbose=False,
