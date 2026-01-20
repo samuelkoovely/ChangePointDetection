@@ -116,3 +116,18 @@ def make_on_window_matrix_entropy_callback(p0, S_vals):
         S_vals.append(conditional_entropy_of_T(Tk_window, p0))
 
     return on_window_matrix
+
+def make_on_window_matrix_entropy_callback_prealloc(p0, S_arr, k_to_idx):
+    """
+    p0: (n,) probability vector
+    S_arr: preallocated numpy array of length num_windows (+1 if you keep leading 0)
+    k_to_idx: function mapping k -> storage index in S_arr
+
+    Requires conditional_entropy_of_T(T, p0) to be defined in the same module.
+    """
+    p0 = np.asarray(p0)
+
+    def on_window_matrix(k, Tk_window):
+        S_arr[k_to_idx(k)] = conditional_entropy_of_T(Tk_window, p0)
+
+    return on_window_matrix
