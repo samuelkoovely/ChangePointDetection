@@ -27,8 +27,16 @@ def worker(lamda):
 
     p0 = np.ones(net.num_nodes) / net.num_nodes
     S_vals = [0.0]  # keep your convention if you want
+    
+    
+    considered_k = np.where(net.times < net.times[-1] - window)[0]
+    k0 = considered_k[0]
+    def k_to_idx(k):  # store at index 1..num_windows
+        return (k - k0) + 1
+    
+    on_T = compute_S_rate.make_on_window_matrix_entropy_callback_prealloc(p0, S_vals, k_to_idx)
 
-    on_T = compute_S_rate.make_on_window_matrix_entropy_callback(p0, S_vals)
+    #on_T = compute_S_rate.make_on_window_matrix_entropy_callback(p0, S_vals)
 
     net.compute_transition_matrices_sliding_timewindow(lamda=lamda,
                                                       reverse_time=False,
