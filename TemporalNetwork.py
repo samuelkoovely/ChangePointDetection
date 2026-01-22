@@ -1897,9 +1897,14 @@ class ContTempNetwork(object):
         for each window matrix (so you can compute entropy on the fly).
         """
 
-        if not hasattr(self, 'inter_T') or lamda not in self.inter_T.keys():
-            raise Exception("Compute inter_T first.")
-
+        if not hasattr(self, 'inter_T') or (lamda not in self.inter_T.keys()):
+            if  not hasattr(self, 'inter_T_lin') or (lamda not in self.inter_T_lin.keys()):
+                raise Exception("Compute inter_T or inter_T_lin first.")
+            else:
+                using_lin_inter_T = True
+        else:
+            using_lin_inter_T = False
+        
         if window_timelength is None or window_timelength <= 0:
             raise ValueError("window_timelength must be a positive number.")
 
@@ -1927,7 +1932,10 @@ class ContTempNetwork(object):
                 print(f'PID {os.getpid()} : {time.time() - t0:.2f}s')
 
             # Start window product at k
-            Tk_window = self.inter_T[lamda][k]
+            if using_lin_inter_T == False:
+                Tk_window = self.inter_T[lamda][k]
+            else:
+                Tk_window = self.inter_T_lin[lamda][10][k] #10 indicates t_s
             if force_csr and not isspmatrix_csr(Tk_window):
                 Tk_window = Tk_window.tocsr()
 
@@ -1936,7 +1944,10 @@ class ContTempNetwork(object):
 
             # Multiply inter-event matrices up to boundary
             for i in range(k + 1, k_rightboundary + 1):
-                Ti = self.inter_T[lamda][i]
+                if using_lin_inter_T == False:
+                    Ti = self.inter_T[lamda][i]
+                else:
+                    Ti = self.inter_T_lin[lamda][10][i] #10 indicates t_s
                 if force_csr and not isspmatrix_csr(Ti):
                     Ti = Ti.tocsr()
 
