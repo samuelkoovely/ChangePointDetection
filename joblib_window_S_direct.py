@@ -6,7 +6,6 @@ import pickle
 from pathlib import Path
 
 import compute_S_rate
-from TemporalNetwork import ContTempNetwork  # only needed if you ever load via ContTempNetwork.load
 
 
 # Load network 
@@ -21,13 +20,29 @@ base = Path(f"/scratch/tmp/180/skoove/block1activity/net{net_id}")
 
 # Output dir for entropy results
 window = 5
+
+# Sampling configuration (option 3: uniform in time)
+sample_fraction = 0.1  # e.g. 0.1 = compute ~10% of windows; adjust as needed
+
+# Windows start times that are valid for the chosen window length
+considered_times = net.times[net.times < net.times[-1] - window]
+M = len(considered_times)
+if M <= 0:
+    raise ValueError("No valid window start times for the given window length.")
+
+m = max(1, int(np.ceil(sample_fraction * M)))
+
+# Targets uniformly spaced in time, then mapped to closest k via searchsorted
+t_targets = np.linspace(float(considered_times[0]), float(considered_times[-1]), m)
+k_samples = np.searchsorted(considered_times, t_targets, side="left")
+k_samples = np.clip(k_samples, 0, M - 1)
+k_samples = np.unique(k_samples).astype(int)
+
+# Convenience: sampled times (useful to store alongside entropy)
+t_samples = net.times[k_samples]
+
 outdir = base / "window_S" / str(window)
 outdir.mkdir(parents=True, exist_ok=True)
-
-
-# Precompute how many windows are needed
-considered_times = net.times[net.times < net.times[-1] - window]
-num_windows = len(considered_times)
 
 
 # Worker
@@ -53,14 +68,15 @@ def worker(lamda: float):
         )
 
         p0 = np.ones(net.num_nodes) / net.num_nodes
-        S_vals = [0.0]  # convention initial value equal to 0
-    
-        considered_k = np.where(net.times < net.times[-1] - window)[0]
-        k0 = considered_k[0]
-        def k_to_idx(k):  # store at index 1..num_windows
-            return (k - k0) + 1
-    
-        on_T = compute_S_rate.make_on_window_matrix_entropy_callback_prealloc(p0, S_vals, k_to_idx)
+
+        # Preallocate only for sampled points (option 5A)
+        S_arr = np.empty(len(k_samples), dtype=float)
+        k_to_pos = {int(k): i for i, k in enumerate(k_samples)}
+
+        def k_to_idx(k):
+            return k_to_pos[int(k)]
+
+        on_T = compute_S_rate.make_on_window_matrix_entropy_callback_prealloc(p0, S_arr, k_to_idx)
 
         net.compute_transition_matrices_sliding_timewindow(
             lamda=lamda,
@@ -69,17 +85,16 @@ def worker(lamda: float):
             save_intermediate=False,    # <-- crucial: don't store matrices
             on_window_matrix=on_T,      # <-- compute/store entropy scalars
             force_csr=True,
+            k_samples=k_samples,
             # tol=...,  # add if used
         )
 
-        #on_T = compute_S_rate.make_on_window_matrix_entropy_callback(p0, S_vals)
-            
-            # (Optional) sanity: make sure length matches what you expect
-            # Expected: 1 + num_windows (because of the leading 0)
-            # If TemporalNetwork loop range differs, can remove this.
-            # assert len(S_vals) == 1 + num_windows
-
-        S_rate = {"lamda": f"{lamda:.11f}", "window_S": S_vals}
+        S_rate = {
+            "lamda": f"{lamda:.11f}",
+            "k_samples": k_samples,
+            "t_samples": t_samples,
+            "window_S": S_arr,
+        }
 
         outfile = outdir / f"window_S{lamda:.11f}"
         with open(outfile, "wb") as f:

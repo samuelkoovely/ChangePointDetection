@@ -1889,12 +1889,21 @@ class ContTempNetwork(object):
                                                    force_csr=False,
                                                    tol=None,
                                                    window_timelength=None,
-                                                   on_window_matrix=None):
+                                                   on_window_matrix=None,
+                                                   k_samples=None,
+                                                   sample_fraction=None,
+                                                   num_samples=None,
+                                                   sample_by_time=True):
         """Compute transition matrices using a sliding window approach.
 
         If `save_intermediate=True`, saves matrices in `self.window_T[lamda]`.
         If `on_window_matrix` is provided, calls `on_window_matrix(k, Tk_window)`
         for each window matrix (so you can compute entropy on the fly).
+
+        Sampling behavior:
+        - If `k_samples` is provided, iterate only those k indices.
+        - Else if `num_samples` or `sample_fraction` is provided, sample k indices as uniformly as possible; if `sample_by_time=True`, sample uniformly in time, otherwise uniformly in index.
+        - The function returns the array of k indices actually computed (`k_used`). If no sampling was requested, return `None`.
         """
 
         if not hasattr(self, 'inter_T') or (lamda not in self.inter_T.keys()):
@@ -1912,7 +1921,48 @@ class ContTempNetwork(object):
             raise Exception("Not implemented yet.")
         else:
             considered_times = self.times[self.times < self.times[-1] - window_timelength]
-            k_range = range(len(considered_times))
+            M = len(considered_times)
+
+            # Determine which k indices to compute
+            k_used = None
+            if k_samples is not None:
+                k_used = np.asarray(list(k_samples), dtype=int)
+            elif (num_samples is not None) or (sample_fraction is not None):
+                if num_samples is None:
+                    # sample_fraction is a proportion in (0,1]
+                    sf = float(sample_fraction)
+                    if sf <= 0:
+                        raise ValueError("sample_fraction must be > 0")
+                    if sf > 1:
+                        sf = 1.0
+                    num_samples = int(np.ceil(sf * M))
+                else:
+                    num_samples = int(num_samples)
+
+                if num_samples <= 0:
+                    raise ValueError("num_samples must be > 0")
+                if num_samples > M:
+                    num_samples = M
+
+                if sample_by_time:
+                    # Uniform in time over [times[0], times[-1]-window_timelength]
+                    t0_s = float(self.times[0])
+                    tmax_s = float(self.times[-1] - window_timelength)
+                    t_targets = np.linspace(t0_s, tmax_s, num_samples)
+                    # Map target times to closest k within considered_times (monotone times)
+                    k_used = np.searchsorted(considered_times, t_targets, side='left')
+                    k_used = np.clip(k_used, 0, M - 1)
+                else:
+                    # Uniform in index
+                    k_used = np.round(np.linspace(0, M - 1, num_samples)).astype(int)
+
+                k_used = np.unique(k_used)
+
+            # Iterator over ks
+            if k_used is None:
+                k_iter = range(M)
+            else:
+                k_iter = k_used
 
         # Only allocate storage if requested
         if save_intermediate:
@@ -1926,9 +1976,9 @@ class ContTempNetwork(object):
 
         t0 = time.time()
 
-        for k in k_range:
+        for k in k_iter:
             if verbose and not k % 1000:
-                print('PID ', os.getpid(), ' : ', k, ' over ', len(considered_times))
+                print('PID ', os.getpid(), ' : ', k, ' over ', M)
                 print(f'PID {os.getpid()} : {time.time() - t0:.2f}s')
 
             # Start window product at k
@@ -1974,6 +2024,7 @@ class ContTempNetwork(object):
 
         if verbose:
             print('PID ', os.getpid(), ' : ', f'finished in {time.time() - t0:.2f}s')
+        return k_used
 
     def compute_entropy(self, lamda=None, t_start=None, t_stop=None,
                                     verbose=False,
