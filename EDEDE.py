@@ -1,7 +1,7 @@
 from scipy.stats import uniform, expon, poisson
 import numpy as np
 from TemporalNetwork import ContTempNetwork
-from typing import Sequence, List, Tuple, Any
+from typing import Sequence, List, Tuple, Any, Optional
 
 def EDEDE(density = 2, inter_tau = 2, t_start = 0, t_end = 300, seed = 314):
 
@@ -207,3 +207,129 @@ def generate_smooth_SBM(
         merge_overlapping_events=True)
 
     return temporal_net
+
+
+def trim_temporal_network_head_tail(
+    temporal_net: ContTempNetwork,
+    density: float,
+    inter_tau: float,
+    tail_start_time: float,
+    head_start_time: Optional[float] = None,
+    clip_ending_times: bool = True,
+    align_first_event_to_zero: bool = True,
+    merge_overlapping_events: Optional[bool] = None,
+) -> Tuple[ContTempNetwork, float]:
+    """Trim the head and tail of a continuous-time temporal network.
+
+    This is useful when the early/late parts of a synthetic time series contain
+    transient effects that you want to discard.
+
+    The kept events are those whose *starting time* satisfies:
+        head <= starting_times < tail_start_time
+
+    where the default head cutoff is computed as:
+        head = inter_tau / 2 * np.log(density * inter_tau)
+
+    After filtering, times are translated so that the first kept event starts at 0.
+    By default we shift by the *first kept starting time* (which can be > head if
+    the network is sparse), i.e.
+        t0 = min(starting_times of kept events)
+        starting_times <- starting_times - t0
+        ending_times   <- ending_times   - t0
+
+    If `align_first_event_to_zero=False`, we instead shift by `head`.
+
+    Parameters
+    ----------
+    temporal_net : ContTempNetwork
+        Input temporal network.
+    density : float
+        Event density used to generate the network.
+    inter_tau : float
+        Mean event duration parameter.
+    tail_start_time : float
+        Absolute time at which the tail begins (events with start times >= this
+        are removed).
+    head_start_time : float, optional
+        If provided, overrides the default head formula.
+    clip_ending_times : bool
+        If True, clip ending times to `tail_start_time` before shifting.
+    align_first_event_to_zero : bool
+        If True (default), shift times by the first kept starting time so the
+        earliest event starts exactly at 0. If False, shift by `head`.
+    merge_overlapping_events : bool, optional
+        If True, merges overlapping events in the returned network. If None,
+        reuses the input network's merge status when available.
+
+    Returns
+    -------
+    (ContTempNetwork, float)
+        Returns a tuple `(new_net, t0)`, where `new_net` is the trimmed temporal
+        network and `t0` is the time shift applied (either the first kept
+        starting time, or `head`).
+
+    Raises
+    ------
+    ValueError
+        If parameters are invalid or the trimming removes all events.
+    """
+
+    if density <= 0 or inter_tau <= 0:
+        raise ValueError("density and inter_tau must be positive.")
+
+    if head_start_time is None:
+        val = density * inter_tau
+        if val <= 0:
+            raise ValueError("density * inter_tau must be > 0 to compute the head cutoff.")
+        # If density*inter_tau <= 1 the log is <= 0; in that case we do not remove a head.
+        head = max(0.0, float(inter_tau) / 2.0 * float(np.log(val)))
+    else:
+        head = float(head_start_time)
+
+    tail_start_time = float(tail_start_time)
+    if not np.isfinite(tail_start_time):
+        raise ValueError("tail_start_time must be finite.")
+    if tail_start_time <= head:
+        raise ValueError(
+            f"tail_start_time must be greater than head (tail_start_time={tail_start_time}, head={head})."
+        )
+
+    # Reuse input merge setting if requested
+    if merge_overlapping_events is None:
+        merge_overlapping_events = bool(getattr(temporal_net, "_overlapping_events_merged", False))
+
+    et = temporal_net.events_table
+    mask = (et["starting_times"] >= head) & (et["starting_times"] < tail_start_time)
+    trimmed = et.loc[mask].copy()
+
+    if trimmed.shape[0] == 0:
+        raise ValueError(
+            "No events remain after trimming. "
+            "Check head/tail cutoffs or the time span of the input network."
+        )
+
+    if clip_ending_times:
+        trimmed["ending_times"] = np.minimum(trimmed["ending_times"].to_numpy(), tail_start_time)
+
+    # Shift time so the (kept) series starts at 0.
+    # If the network is sparse, there may be no event exactly at `head`, so by
+    # default we align the first kept event to 0.
+    if align_first_event_to_zero:
+        t0 = float(trimmed["starting_times"].min())
+    else:
+        t0 = head
+
+    trimmed["starting_times"] = trimmed["starting_times"].to_numpy() - t0
+    trimmed["ending_times"] = trimmed["ending_times"].to_numpy() - t0
+
+    # Keep the same node labels as the input network
+    node_to_label_dict = getattr(temporal_net, "node_to_label_dict", None)
+
+    new_net = ContTempNetwork(
+        events_table=trimmed.reset_index(drop=True),
+        relabel_nodes=False,
+        node_to_label_dict=node_to_label_dict,
+        merge_overlapping_events=merge_overlapping_events,
+    )
+
+    return new_net, t0
