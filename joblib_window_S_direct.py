@@ -5,6 +5,8 @@ import numpy as np
 import pickle
 from pathlib import Path
 
+import time
+
 import compute_S_rate
 
 
@@ -121,4 +123,12 @@ def worker(lamda: float):
 # Run
 lambdas = np.logspace(-5, 0, 10)
 n_cpu = 10
+
+t_start = time.time()
 Parallel(n_jobs=n_cpu)(delayed(worker)(l) for l in lambdas)
+t_end = time.time()
+
+elapsed = t_end - t_start
+h, rem = divmod(elapsed, 3600)
+m, s = divmod(rem, 60)
+print(f"Total runtime: {elapsed:.2f} s ({int(h):02d}:{int(m):02d}:{s:05.2f})")
