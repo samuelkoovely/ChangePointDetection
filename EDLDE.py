@@ -3,7 +3,7 @@ import numpy as np
 from TemporalNetwork import ContTempNetwork
 from typing import Sequence, List, Tuple, Any, Optional
 
-def EDEDE(density = 2, inter_tau = 2, t_start = 0, t_end = 300, seed = 314):
+def EDLDE(density = 2, inter_tau = 2, t_start = 0, t_end = 300, seed = 314):
 
     number_of_events = poisson.rvs(size = 1, mu = (t_end - t_start) * density, random_state = seed)[0]
     starting_times = np.sort(uniform.rvs(size=number_of_events, loc=t_start, scale=t_end - t_start, random_state=seed))
@@ -12,7 +12,7 @@ def EDEDE(density = 2, inter_tau = 2, t_start = 0, t_end = 300, seed = 314):
     return number_of_events, starting_times, ending_times
 
 
-def activity_EDEDE(starting_times: Sequence[Any],
+def activity_EDLDE(starting_times: Sequence[Any],
                     ending_times:   Sequence[Any]) -> Tuple[List[Any], List[int]]:
     """
     Compute the piecewise-constant active-event count over time for intervals [start, end).
@@ -162,7 +162,7 @@ def generate_smooth_SBM(
     rng = np.random.default_rng(seed)
 
     if number_of_events is None or starting_times is None or ending_times is None:
-        number_of_events, starting_times, ending_times = EDEDE(
+        number_of_events, starting_times, ending_times = EDLDE(
             density=density,
             inter_tau=inter_tau,
             t_start=t_start,
