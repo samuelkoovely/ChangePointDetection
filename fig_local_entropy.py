@@ -21,14 +21,14 @@ def compute_interval_matrices(network, intervals):
     ]
 
 
-def load_entropy_curves(base_dir, lamdas, subdir="S"):
+def load_entropy_curves(base_dir, lamdas, subdir="window_S/5"):
     curves = []
     for lamda in lamdas:
         lamda_str = f"{lamda:.11f}"
-        filepath = f"//scratch/tmp/180/skoove/{base_dir}/{subdir}/S{lamda_str}"
+        filepath = f"//scratch/tmp/180/skoove/{base_dir}/{subdir}/window_S{lamda_str}"
         with open(filepath, 'rb') as f:
             data = pickle.load(f)
-        curves.append(data['S'][lamda_str])
+        curves.append([data['t_samples'], data['window_S']])
     return curves
 
 
@@ -38,12 +38,11 @@ def make_inset_cmap():
     return cmap
 
 
-def plot_network_panel(ax, network, forward_curves, backward_curve, matrices, panel_title,
+def plot_network_panel(ax, network, forward_curves, matrices, panel_title,
                        curve_indices, forward_colors, time_intervals, inset_positions, inset_cmap):
     for color_idx, curve_idx in enumerate(curve_indices):
-        ax.plot(network.times, forward_curves[curve_idx], color=forward_colors[color_idx], alpha=1)
+        ax.plot(forward_curves[curve_idx][0], forward_curves[curve_idx][1], color=forward_colors[color_idx], alpha=1)
 
-    ax.plot(network.times[::-1], backward_curve, '--', color='black', alpha=1)
 
     ax.set_xlim(-5, 310)
     ax.set_xlabel("t [s]")
@@ -117,14 +116,10 @@ interval_matrices = {
 }
 
 forward_entropy = {
-    key: load_entropy_curves(key, lamdas, subdir='S')
+    key: load_entropy_curves(key, lamdas, subdir='window_S/5')
     for key in networks
 }
 
-backward_entropy = {
-    key: load_entropy_curves(key, lamdas, subdir='S_rev')
-    for key in networks
-}
 
 fig = plt.figure(figsize=(12, 4))
 gs = fig.add_gridspec(1, 3)
@@ -139,7 +134,6 @@ for ax, spec in zip(np.atleast_1d(axes), panel_specs):
         ax=ax,
         network=networks[key],
         forward_curves=forward_entropy[key],
-        backward_curve=backward_entropy[key][spec['backward_index']],
         matrices=interval_matrices[key],
         panel_title=spec['title'],
         curve_indices=curve_indices,
@@ -156,5 +150,5 @@ for ax in axes[1:]:
 
 # Adjust layout and display
 plt.tight_layout()
-plt.savefig('/home/b/skoove/Desktop/ChangePointDetection/fig_global_entropy.pdf', format='pdf', dpi=300, bbox_inches='tight')
+plt.savefig('/home/b/skoove/Desktop/ChangePointDetection/fig_local_entropy.pdf', format='pdf', dpi=300, bbox_inches='tight')
 plt.show()
