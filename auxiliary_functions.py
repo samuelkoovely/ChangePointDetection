@@ -1,7 +1,8 @@
 import numpy as np
 import random as rd
 import networkx as nx
-from scipy.fft import fft, ifft, fftfreq
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
 
 def derivative(v1, v2):
     """
@@ -201,3 +202,29 @@ def Discrete_RW_T(A):    # Calculate the degree vector (sum of non-zero elements
     T = degree_matrix @ A
     np.fill_diagonal(T, no_out_edges, wrap=False)
     return T
+
+def generate_plasma_colors(n, cmap_name='plasma'):
+    '''
+    Generates a list of `n` equally spaced colors from a given matplotlib colormap.
+    The output colors are in hexadecimal format.
+
+    Parameters
+    ----------
+    n : int
+        Number of colors to generate.
+    cmap_name : str, optional
+        Name of the matplotlib colormap (default is 'plasma').
+
+    Returns
+    -------
+    colors : list of str
+        List of `n` colors in hexadecimal format.
+
+    Example
+    -------
+    >>> generate_plasma_colors(5)
+    ['#000000', '#1a1a1a', '#333333', '#4d4d4d', '#666666']
+    '''
+    cmap = cm.get_cmap(cmap_name, n)  # Get colormap with n discrete steps
+    colors = [mcolors.to_hex(cmap(i)) for i in range(n)]
+    return colors
