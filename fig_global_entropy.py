@@ -1,6 +1,7 @@
 import numpy as np
 import pickle
 import matplotlib.pyplot as plt
+from matplotlib import cm
 import auxiliary_functions
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
@@ -31,8 +32,14 @@ def load_entropy_curves(base_dir, lamdas, subdir="S"):
     return curves
 
 
+def make_inset_cmap():
+    cmap = cm.get_cmap('inferno').copy()
+    cmap.set_bad(color='white')
+    return cmap
+
+
 def plot_network_panel(ax, network, forward_curves, backward_curve, matrices, panel_title,
-                       curve_indices, forward_colors, time_intervals, inset_positions):
+                       curve_indices, forward_colors, time_intervals, inset_positions, inset_cmap):
     for color_idx, curve_idx in enumerate(curve_indices):
         ax.plot(network.times, forward_curves[curve_idx], color=forward_colors[color_idx], alpha=1)
 
@@ -40,7 +47,6 @@ def plot_network_panel(ax, network, forward_curves, backward_curve, matrices, pa
 
     ax.set_xlim(-5, 310)
     ax.set_xlabel("t [s]")
-    ax.set_ylabel("Entropy")
     ax.set_title(panel_title, loc='left', fontsize=14)
 
     for matrix, pos, (start, end) in zip(matrices, inset_positions, time_intervals):
@@ -52,10 +58,26 @@ def plot_network_panel(ax, network, forward_curves, backward_curve, matrices, pa
             bbox_to_anchor=(pos, 0.05, 1, 1),
             bbox_transform=ax.transAxes,
         )
-        inset_ax.matshow(matrix, cmap='plasma', aspect='equal')
+        masked_matrix = np.ma.masked_where(matrix == 0, matrix)
+        positive_entries = matrix[matrix > 0]
+        vmax = positive_entries.max() if positive_entries.size else 1.0
+
+        inset_ax.matshow(
+            masked_matrix,
+            cmap=inset_cmap,
+            aspect='equal',
+            vmin=0,
+            vmax=vmax,
+            interpolation='nearest',
+        )
+        inset_ax.set_facecolor('white')
         inset_ax.set_xticks([])
         inset_ax.set_yticks([])
         inset_ax.set_title(f"{start} ≤ t < {end}", fontsize=8)
+        for spine in inset_ax.spines.values():
+            spine.set_visible(True)
+            spine.set_linewidth(0.8)
+            spine.set_edgecolor('black')
 
 
 networks = {
@@ -106,11 +128,12 @@ backward_entropy = {
 
 fig = plt.figure(figsize=(12, 4))
 gs = fig.add_gridspec(1, 3)
+axes = gs.subplots(sharey=True)
 
 color = auxiliary_functions.generate_plasma_colors(len(curve_indices))
+inset_cmap = make_inset_cmap()
 
-for col, spec in enumerate(panel_specs):
-    ax = fig.add_subplot(gs[0, col])
+for ax, spec in zip(np.atleast_1d(axes), panel_specs):
     key = spec['key']
     plot_network_panel(
         ax=ax,
@@ -123,8 +146,13 @@ for col, spec in enumerate(panel_specs):
         forward_colors=color,
         time_intervals=time_intervals,
         inset_positions=inset_positions,
+        inset_cmap=inset_cmap,
     )
 
+axes = np.atleast_1d(axes)
+axes[0].set_ylabel("Entropy")
+for ax in axes[1:]:
+    ax.tick_params(labelleft=False)
 
 # Adjust layout and display
 plt.tight_layout()
