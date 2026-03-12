@@ -1,0 +1,236 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Sequence
+import pickle
+
+import numpy as np
+
+import compute_S_rate
+
+
+DEFAULT_WINDOWS = [1, 5, 10, 25]
+DEFAULT_SAMPLE_FRACTION = 0.1
+
+
+# -----------------------------------------------------------------------------
+# Loading helpers
+# -----------------------------------------------------------------------------
+
+def load_pickled_network(pkl_path: str | Path, index: int = 0, key: str = "tnet"):
+    """
+    Load one temporal network from a pickle file like the ones used in the
+    current project.
+
+    Parameters
+    ----------
+    pkl_path:
+        Path to the pickle file.
+    index:
+        Index of the entry to load when the pickle stores a list-like object.
+    key:
+        Key used to retrieve the network inside the selected entry.
+    """
+    pkl_path = Path(pkl_path)
+    with open(pkl_path, "rb") as handle:
+        obj = pickle.load(handle)
+    return obj[index][key]
+
+
+# -----------------------------------------------------------------------------
+# Core preprocessing helpers
+# -----------------------------------------------------------------------------
+
+def ensure_laplacians(net: Any) -> None:
+    """
+    Ensure the network has Laplacian matrices available.
+    """
+    if not hasattr(net, "L"):
+        net.compute_laplacian_matrices(
+            t_start=net.times[0],
+            t_stop=net.times[-1],
+            random_walk=False,
+        )
+
+
+
+def compute_inter_transition_matrices_for_lambda(net: Any, lamda: float) -> None:
+    """
+    Compute the inter-transition matrices for one lambda value.
+
+    This is the expensive lambda-dependent preprocessing step that should be
+    reused across all tested window lengths for the same lambda.
+    """
+    ensure_laplacians(net)
+    net.compute_inter_transition_matrices(
+        lamda=lamda,
+        t_start=net.times[0],
+        t_stop=net.times[-1],
+        dense_expm=False,
+        use_sparse_stoch=False,
+        random_walk=False,
+    )
+
+
+
+def get_sampled_window_indices_and_times(
+    net: Any,
+    window: float,
+    sample_fraction: float = DEFAULT_SAMPLE_FRACTION,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Select valid window start indices by sampling approximately a fixed fraction
+    of window positions uniformly in time.
+
+    Returns
+    -------
+    k_samples:
+        Integer indices of sampled windows.
+    t_samples:
+        Times corresponding to the sampled window starts.
+    """
+    considered_times = net.times[net.times < net.times[-1] - window]
+    M = len(considered_times)
+
+    if M <= 0:
+        return np.array([], dtype=int), np.array([], dtype=float)
+
+    m = max(1, int(np.ceil(sample_fraction * M)))
+
+    t_targets = np.linspace(float(considered_times[0]), float(considered_times[-1]), m)
+    k_samples = np.searchsorted(considered_times, t_targets, side="left")
+    k_samples = np.clip(k_samples, 0, M - 1)
+    k_samples = np.unique(k_samples).astype(int)
+
+    t_samples = net.times[k_samples]
+    return k_samples, t_samples
+
+
+
+def compute_window_entropy_signal(
+    net: Any,
+    lamda: float,
+    window: float,
+    sample_fraction: float = DEFAULT_SAMPLE_FRACTION,
+    p0: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """
+    Compute the entropy signal for one (lambda, window) pair.
+
+    Assumes the lambda-dependent inter-transition matrices have already been
+    computed, so this function can be called repeatedly for multiple window
+    values after a single preprocessing pass.
+
+    Returns a dictionary containing the signal and its associated times.
+    """
+    k_samples, t_samples = get_sampled_window_indices_and_times(
+        net=net,
+        window=window,
+        sample_fraction=sample_fraction,
+    )
+
+    if len(k_samples) == 0:
+        return {
+            "lamda": float(lamda),
+            "window": float(window),
+            "k_samples": np.array([], dtype=int),
+            "t_samples": np.array([], dtype=float),
+            "window_S": np.array([], dtype=float),
+            "signal": np.empty((0, 1), dtype=float),
+        }
+
+    if p0 is None:
+        p0 = np.ones(net.num_nodes, dtype=float) / net.num_nodes
+    else:
+        p0 = np.asarray(p0, dtype=float)
+
+    S_arr = np.empty(len(k_samples), dtype=float)
+    k_to_pos = {int(k): i for i, k in enumerate(k_samples)}
+
+    def k_to_idx(k: int) -> int:
+        return k_to_pos[int(k)]
+
+    on_T = compute_S_rate.make_on_window_matrix_entropy_callback_prealloc(p0, S_arr, k_to_idx)
+
+    net.compute_transition_matrices_sliding_timewindow(
+        lamda=lamda,
+        reverse_time=False,
+        window_timelength=window,
+        save_intermediate=False,
+        on_window_matrix=on_T,
+        force_csr=True,
+        k_samples=k_samples,
+    )
+
+    signal = S_arr.reshape(-1, 1)
+
+    return {
+        "lamda": float(lamda),
+        "window": float(window),
+        "k_samples": k_samples,
+        "t_samples": np.asarray(t_samples, dtype=float),
+        "window_S": S_arr,
+        "signal": signal,
+    }
+
+
+
+def compute_signals_for_lambda(
+    net: Any,
+    lamda: float,
+    windows: Sequence[float] = DEFAULT_WINDOWS,
+    sample_fraction: float = DEFAULT_SAMPLE_FRACTION,
+    p0: np.ndarray | None = None,
+) -> dict[float, dict[str, Any]]:
+    """
+    Compute entropy signals for all windows associated with one lambda value.
+
+    This is the main reusable entry point for the future grid-search code:
+    the expensive lambda-specific preprocessing is performed once, then the
+    signal is computed for every requested window.
+    """
+    compute_inter_transition_matrices_for_lambda(net, lamda)
+
+    results: dict[float, dict[str, Any]] = {}
+    for window in windows:
+        results[float(window)] = compute_window_entropy_signal(
+            net=net,
+            lamda=lamda,
+            window=window,
+            sample_fraction=sample_fraction,
+            p0=p0,
+        )
+    return results
+
+
+# -----------------------------------------------------------------------------
+# Optional persistence helpers
+# -----------------------------------------------------------------------------
+
+def save_signal_result(result: dict[str, Any], outdir: str | Path) -> Path:
+    """
+    Save one signal result dictionary to disk.
+    """
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    lamda = float(result["lamda"])
+    outfile = outdir / f"window_S{lamda:.11f}"
+    with open(outfile, "wb") as f:
+        pickle.dump(result, f)
+    return outfile
+
+
+
+def save_signals_for_lambda(
+    results_by_window: dict[float, dict[str, Any]],
+    base: str | Path,
+) -> None:
+    """
+    Save all window-specific signal results for one lambda using the same folder
+    layout as the original script.
+    """
+    base = Path(base)
+    for window, result in results_by_window.items():
+        outdir = base / "window_S" / str(window)
+        save_signal_result(result, outdir)
