@@ -11,7 +11,7 @@ with open('merge_merge.pkl', 'rb') as handle:
 with open('block1activity.pkl', 'rb') as handle:
     block1activity = pickle.load(handle)[0]['tnet']
 with open('block2activities.pkl', 'rb') as handle:
-    block2activities = pickle.load(handle)
+    block2activities = pickle.load(handle)[0]['tnet']
 
 
 def compute_interval_matrices(network, intervals):
@@ -35,7 +35,7 @@ def build_forward_entropy():
     return {
         'merge_merge': [
             load_entropy_curve(
-                f"//scratch/tmp/180/skoove/merge_merge/window_/{subdir}/window_S{merge_merge_x}"
+                f"//scratch/tmp/180/skoove/merge_merge/window_S/{subdir}/window_S{merge_merge_x}"
             )
             for subdir in subdirs
         ],
