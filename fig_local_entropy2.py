@@ -21,15 +21,37 @@ def compute_interval_matrices(network, intervals):
     ]
 
 
-def load_entropy_curves(base_dir, lamdas, subdir="window_S/5"):
-    curves = []
-    for lamda in lamdas:
-        lamda_str = f"{lamda:.11f}"
-        filepath = f"//scratch/tmp/180/skoove/{base_dir}/{subdir}/window_S{lamda_str}"
-        with open(filepath, 'rb') as f:
-            data = pickle.load(f)
-        curves.append([data['t_samples'], data['window_S']])
-    return curves
+def load_entropy_curve(filepath):
+    with open(filepath, 'rb') as f:
+        data = pickle.load(f)
+    return [data['t_samples'], data['window_S']]
+
+
+def build_forward_entropy():
+    merge_merge_x = f"{np.logspace(-4, -1, 10)[5]:.11f}"
+    block_x = f"{np.logspace(-5, 0, 10)[5]:.11f}"
+    subdirs = [1, 5, 10, 25]
+
+    return {
+        'merge_merge': [
+            load_entropy_curve(
+                f"//scratch/tmp/180/skoove/merge_merge/window_/{subdir}/window_S{merge_merge_x}"
+            )
+            for subdir in subdirs
+        ],
+        'block1activity': [
+            load_entropy_curve(
+                f"//scratch/tmp/180/skoove/block1activity/net0/window_S/{subdir}/window_S{block_x}"
+            )
+            for subdir in subdirs
+        ],
+        'block2activities': [
+            load_entropy_curve(
+                f"//scratch/tmp/180/skoove/block2activities/net0/window_S/{subdir}/window_S{block_x}"
+            )
+            for subdir in subdirs
+        ],
+    }
 
 
 def make_inset_cmap():
@@ -38,7 +60,7 @@ def make_inset_cmap():
     return cmap
 
 
-def plot_network_panel(ax, network, forward_curves, matrices, panel_title,
+def plot_network_panel(ax, forward_curves, matrices, panel_title,
                        curve_indices, forward_colors, time_intervals, inset_positions, inset_cmap):
     for color_idx, curve_idx in enumerate(curve_indices):
         ax.plot(forward_curves[curve_idx][0], forward_curves[curve_idx][1], color=forward_colors[color_idx], alpha=1)
@@ -80,49 +102,36 @@ def plot_network_panel(ax, network, forward_curves, matrices, panel_title,
 
 
 networks = {
-    'merge_merge': merge_merge,
     'block1activity': block1activity,
     'block2activities': block2activities,
 }
 
 panel_specs = [
     {
-        'key': 'merge_merge',
-        'title': '(A)',
-        'backward_index': 7,
-    },
-    {
         'key': 'block1activity',
-        'title': '(B)',
-        'backward_index': 5,
+        'title': '(A)',
     },
     {
         'key': 'block2activities',
-        'title': '(C)',
-        'backward_index': 6,
+        'title': '(B)',
     },
 ]
 
-curve_indices = [5, 6, 7, 8]
-inset_positions = [0.06, 0.37, 0.68]
+curve_indices = [0, 1, 2, 3]
+inset_positions = [0.16, 0.56]
 
-time_intervals = [(0, 100), (100, 200), (200, 300)]
-
-lamdas = np.logspace(-4,-1,10)
+time_intervals = [(0, 100), (100, 200)]
 
 interval_matrices = {
     key: compute_interval_matrices(network, time_intervals)
     for key, network in networks.items()
 }
 
-forward_entropy = {
-    key: load_entropy_curves(key, lamdas, subdir='window_S/5')
-    for key in networks
-}
+forward_entropy = build_forward_entropy()
 
 
-fig = plt.figure(figsize=(12, 4))
-gs = fig.add_gridspec(1, 3)
+fig = plt.figure(figsize=(8, 4))
+gs = fig.add_gridspec(1, 2)
 axes = gs.subplots(sharey=True)
 
 color = auxiliary_functions.generate_plasma_colors(len(curve_indices))
@@ -132,7 +141,6 @@ for ax, spec in zip(np.atleast_1d(axes), panel_specs):
     key = spec['key']
     plot_network_panel(
         ax=ax,
-        network=networks[key],
         forward_curves=forward_entropy[key],
         matrices=interval_matrices[key],
         panel_title=spec['title'],
