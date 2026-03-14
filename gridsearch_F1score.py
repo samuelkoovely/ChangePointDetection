@@ -260,23 +260,22 @@ def grid_search_f1(
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    from signal_generation import load_pickled_network
+    with open("block2activities.pkl", "rb") as f:
+        dataset = pickle.load(f)
 
-    lambdas = np.logspace(-5, 0, 10)
-    windows = [1, 5, 10]
+    lambdas = np.logspace(-5, 0, 2)
+    windows = [1, 5]
     margin = 5.0
     n_jobs = 4
 
-    # Replace these with your actual training samples.
-    # Here each sample contains a temporal network object plus its annotated
-    # ground-truth change points.
     training_samples = [
         CPSample(
-            data=load_pickled_network("block1activity.pkl", index=0, key="tnet"),
-            true_change_points=[100.0],
+            data=entry["tnet"],
+            true_change_points=[float(entry["bkp"])],
             n_bkps=1,
-            name="sample_0",
-        ),
+            name=f"sample_{i}",
+        )
+        for i, entry in enumerate(dataset)
     ]
 
     summary = grid_search_f1(
@@ -286,10 +285,11 @@ if __name__ == "__main__":
         margin=margin,
         n_jobs=n_jobs,
         outdir="./gridsearch_results",
-        sample_fraction=0.1,
+        sample_fraction=0.01,
         kernel="linear",
     )
 
+    print("Number of samples:", len(training_samples))
     print("Score array shape:", summary["score_array"].shape)
     print("Best lamda:", summary["best_lamda"])
     print("Best window:", summary["best_window"])
