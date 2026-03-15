@@ -20,7 +20,7 @@ import numpy as np
 import ruptures as rpt
 from joblib import Parallel, delayed
 
-from evaluation_metrics import f1_score
+from evaluation_metrics import f1_score, hausdorff_distance
 from signal_generation import compute_signals_for_lambda
 
 
@@ -125,10 +125,13 @@ def evaluate_lambda(
     score_array[:] = np.nan
 
     per_window_scores: dict[float, np.ndarray] = {}
+    per_window_f1_scores: dict[float, np.ndarray] = {}
+    per_window_hausdorff: dict[float, np.ndarray] = {}
     predicted_change_points: dict[float, list[list[float]]] = {}
     sample_names = [sample.name for sample in samples]
 
-    scores_accumulator = {float(window): [] for window in windows}
+    f1_accumulator = {float(window): [] for window in windows}
+    hausdorff_accumulator = {float(window): [] for window in windows}
     preds_accumulator = {float(window): [] for window in windows}
 
     for sample in samples:
@@ -148,22 +151,37 @@ def evaluate_lambda(
                 n_bkps=sample.n_bkps,
                 kernel=kernel,
             )
-            score = f1_score(sample.true_change_points, pred_cps, margin)
+            f1 = f1_score(sample.true_change_points, pred_cps, margin)
+            haus = hausdorff_distance(sample.true_change_points, pred_cps)
 
-            scores_accumulator[float(window)].append(score)
+            f1_accumulator[float(window)].append(f1)
+            hausdorff_accumulator[float(window)].append(haus)
             preds_accumulator[float(window)].append(pred_cps)
 
     for j, window in enumerate(windows):
-        window_scores = np.asarray(scores_accumulator[float(window)], dtype=float)
-        per_window_scores[float(window)] = window_scores
+        window_f1_scores = np.asarray(f1_accumulator[float(window)], dtype=float)
+        window_hausdorff_scores = np.asarray(hausdorff_accumulator[float(window)], dtype=float)
+        per_window_scores[float(window)] = window_f1_scores
+        per_window_f1_scores[float(window)] = window_f1_scores
+        per_window_hausdorff[float(window)] = window_hausdorff_scores
         predicted_change_points[float(window)] = preds_accumulator[float(window)]
-        score_array[j] = float(np.mean(window_scores)) if len(window_scores) > 0 else math.nan
+        score_array[j] = float(np.mean(window_f1_scores)) if len(window_f1_scores) > 0 else math.nan
 
     return {
         "lamda": float(lamda),
         "windows": np.asarray(windows, dtype=float),
         "score_array": score_array,
         "per_window_scores": per_window_scores,
+        "per_window_f1_scores": per_window_f1_scores,
+        "per_window_hausdorff": per_window_hausdorff,
+        "mean_f1_per_window": {
+            float(window): (float(np.mean(per_window_f1_scores[float(window)])) if len(per_window_f1_scores[float(window)]) > 0 else math.nan)
+            for window in windows
+        },
+        "mean_hausdorff_per_window": {
+            float(window): (float(np.mean(per_window_hausdorff[float(window)])) if len(per_window_hausdorff[float(window)]) > 0 else math.nan)
+            for window in windows
+        },
         "predicted_change_points": predicted_change_points,
         "sample_names": sample_names,
     }
@@ -212,10 +230,16 @@ def grid_search_f1(
 
     score_array = np.empty((len(lambdas), len(windows)), dtype=float)
     score_array[:] = np.nan
+    hausdorff_array = np.empty((len(lambdas), len(windows)), dtype=float)
+    hausdorff_array[:] = np.nan
 
     results_by_lambda: dict[float, dict] = {}
     for i, res in enumerate(lambda_results):
         score_array[i, :] = res["score_array"]
+        hausdorff_array[i, :] = np.array(
+            [res["mean_hausdorff_per_window"][float(window)] for window in windows],
+            dtype=float,
+        )
         results_by_lambda[float(res["lamda"])] = res
 
     if np.all(np.isnan(score_array)):
@@ -237,12 +261,15 @@ def grid_search_f1(
         "sample_fraction": float(sample_fraction),
         "kernel": kernel,
         "score_array": score_array,
+        "f1_array": score_array,
+        "hausdorff_array": hausdorff_array,
         "lambda_results": lambda_results,
         "results_by_lambda": results_by_lambda,
         "best_index": best_index,
         "best_lamda": best_lamda,
         "best_window": best_window,
         "best_score": best_score,
+        "best_f1": best_score,
         "elapsed_seconds": elapsed,
     }
 
@@ -294,3 +321,4 @@ if __name__ == "__main__":
     print("Best lamda:", summary["best_lamda"])
     print("Best window:", summary["best_window"])
     print("Best mean F1:", summary["best_score"])
+    print("Hausdorff at best F1 params:", summary["hausdorff_array"][summary["best_index"]] if summary["best_index"] is not None else math.nan)
