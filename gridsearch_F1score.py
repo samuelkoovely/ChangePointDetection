@@ -124,7 +124,14 @@ def evaluate_lambda(
     score_array = np.empty(len(windows), dtype=float)
     score_array[:] = np.nan
 
-    per_window_scores: dict[float, np.ndarray] = {}
+    signal_generation_time_total = 0.0
+    change_point_detection_time_total = 0.0
+    metrics_time_total = 0.0
+
+    signal_generation_time_per_window = {float(window): 0.0 for window in windows}
+    change_point_detection_time_per_window = {float(window): 0.0 for window in windows}
+    metrics_time_per_window = {float(window): 0.0 for window in windows}
+
     per_window_f1_scores: dict[float, np.ndarray] = {}
     per_window_hausdorff: dict[float, np.ndarray] = {}
     predicted_change_points: dict[float, list[list[float]]] = {}
@@ -135,6 +142,7 @@ def evaluate_lambda(
     preds_accumulator = {float(window): [] for window in windows}
 
     for sample in samples:
+        t_signal_start = time.perf_counter()
         signals_by_window = compute_signals_for_lambda(
             net=sample.data,
             lamda=lamda,
@@ -142,26 +150,47 @@ def evaluate_lambda(
             sample_fraction=sample_fraction,
             p0=p0,
         )
+        signal_elapsed = time.perf_counter() - t_signal_start
+        signal_generation_time_total += signal_elapsed
 
         for window in windows:
             signal_result = signals_by_window[float(window)]
+
+            signal_window_start = time.perf_counter()
+            _ = signal_result
+            signal_window_elapsed = time.perf_counter() - signal_window_start
+            signal_generation_time_per_window[float(window)] += signal_window_elapsed
+
+            t_detection_start = time.perf_counter()
             pred_cps = detect_change_points_from_signal(
                 signal=signal_result["signal"],
                 selected_times=signal_result["t_samples"],
                 n_bkps=sample.n_bkps,
                 kernel=kernel,
             )
+            detection_elapsed = time.perf_counter() - t_detection_start
+            change_point_detection_time_total += detection_elapsed
+            change_point_detection_time_per_window[float(window)] += detection_elapsed
+
+            t_metrics_start = time.perf_counter()
             f1 = f1_score(sample.true_change_points, pred_cps, margin)
             haus = hausdorff_distance(sample.true_change_points, pred_cps)
+            metrics_elapsed = time.perf_counter() - t_metrics_start
+            metrics_time_total += metrics_elapsed
+            metrics_time_per_window[float(window)] += metrics_elapsed
 
             f1_accumulator[float(window)].append(f1)
             hausdorff_accumulator[float(window)].append(haus)
             preds_accumulator[float(window)].append(pred_cps)
 
+    if len(samples) > 0:
+        num_windows = len(windows)
+        for window in windows:
+            signal_generation_time_per_window[float(window)] += signal_generation_time_total / num_windows
+
     for j, window in enumerate(windows):
         window_f1_scores = np.asarray(f1_accumulator[float(window)], dtype=float)
         window_hausdorff_scores = np.asarray(hausdorff_accumulator[float(window)], dtype=float)
-        per_window_scores[float(window)] = window_f1_scores
         per_window_f1_scores[float(window)] = window_f1_scores
         per_window_hausdorff[float(window)] = window_hausdorff_scores
         predicted_change_points[float(window)] = preds_accumulator[float(window)]
@@ -171,7 +200,6 @@ def evaluate_lambda(
         "lamda": float(lamda),
         "windows": np.asarray(windows, dtype=float),
         "score_array": score_array,
-        "per_window_scores": per_window_scores,
         "per_window_f1_scores": per_window_f1_scores,
         "per_window_hausdorff": per_window_hausdorff,
         "mean_f1_per_window": {
@@ -181,6 +209,14 @@ def evaluate_lambda(
         "mean_hausdorff_per_window": {
             float(window): (float(np.mean(per_window_hausdorff[float(window)])) if len(per_window_hausdorff[float(window)]) > 0 else math.nan)
             for window in windows
+        },
+        "timing": {
+            "signal_generation_total_seconds": signal_generation_time_total,
+            "change_point_detection_total_seconds": change_point_detection_time_total,
+            "metrics_total_seconds": metrics_time_total,
+            "signal_generation_per_window_seconds": signal_generation_time_per_window,
+            "change_point_detection_per_window_seconds": change_point_detection_time_per_window,
+            "metrics_per_window_seconds": metrics_time_per_window,
         },
         "predicted_change_points": predicted_change_points,
         "sample_names": sample_names,
@@ -233,6 +269,20 @@ def grid_search_f1(
     hausdorff_array = np.empty((len(lambdas), len(windows)), dtype=float)
     hausdorff_array[:] = np.nan
 
+    signal_generation_time_array = np.empty((len(lambdas), len(windows)), dtype=float)
+    signal_generation_time_array[:] = np.nan
+    change_point_detection_time_array = np.empty((len(lambdas), len(windows)), dtype=float)
+    change_point_detection_time_array[:] = np.nan
+    metrics_time_array = np.empty((len(lambdas), len(windows)), dtype=float)
+    metrics_time_array[:] = np.nan
+
+    signal_generation_time_per_lambda = np.empty(len(lambdas), dtype=float)
+    signal_generation_time_per_lambda[:] = np.nan
+    change_point_detection_time_per_lambda = np.empty(len(lambdas), dtype=float)
+    change_point_detection_time_per_lambda[:] = np.nan
+    metrics_time_per_lambda = np.empty(len(lambdas), dtype=float)
+    metrics_time_per_lambda[:] = np.nan
+
     results_by_lambda: dict[float, dict] = {}
     for i, res in enumerate(lambda_results):
         score_array[i, :] = res["score_array"]
@@ -240,6 +290,21 @@ def grid_search_f1(
             [res["mean_hausdorff_per_window"][float(window)] for window in windows],
             dtype=float,
         )
+        signal_generation_time_array[i, :] = np.array(
+            [res["timing"]["signal_generation_per_window_seconds"][float(window)] for window in windows],
+            dtype=float,
+        )
+        change_point_detection_time_array[i, :] = np.array(
+            [res["timing"]["change_point_detection_per_window_seconds"][float(window)] for window in windows],
+            dtype=float,
+        )
+        metrics_time_array[i, :] = np.array(
+            [res["timing"]["metrics_per_window_seconds"][float(window)] for window in windows],
+            dtype=float,
+        )
+        signal_generation_time_per_lambda[i] = float(res["timing"]["signal_generation_total_seconds"])
+        change_point_detection_time_per_lambda[i] = float(res["timing"]["change_point_detection_total_seconds"])
+        metrics_time_per_lambda[i] = float(res["timing"]["metrics_total_seconds"])
         results_by_lambda[float(res["lamda"])] = res
 
     if np.all(np.isnan(score_array)):
@@ -263,6 +328,15 @@ def grid_search_f1(
         "score_array": score_array,
         "f1_array": score_array,
         "hausdorff_array": hausdorff_array,
+        "signal_generation_time_array": signal_generation_time_array,
+        "change_point_detection_time_array": change_point_detection_time_array,
+        "metrics_time_array": metrics_time_array,
+        "signal_generation_time_per_lambda": signal_generation_time_per_lambda,
+        "change_point_detection_time_per_lambda": change_point_detection_time_per_lambda,
+        "metrics_time_per_lambda": metrics_time_per_lambda,
+        "total_signal_generation_seconds": float(np.nansum(signal_generation_time_per_lambda)),
+        "total_change_point_detection_seconds": float(np.nansum(change_point_detection_time_per_lambda)),
+        "total_metrics_seconds": float(np.nansum(metrics_time_per_lambda)),
         "lambda_results": lambda_results,
         "results_by_lambda": results_by_lambda,
         "best_index": best_index,
@@ -322,3 +396,11 @@ if __name__ == "__main__":
     print("Best window:", summary["best_window"])
     print("Best mean F1:", summary["best_score"])
     print("Hausdorff at best F1 params:", summary["hausdorff_array"][summary["best_index"]] if summary["best_index"] is not None else math.nan)
+    print("Total runtime:", summary["elapsed_seconds"])
+    print("Total signal generation time:", summary["total_signal_generation_seconds"])
+    print("Total change-point detection time:", summary["total_change_point_detection_seconds"])
+    print("Total metrics computation time:", summary["total_metrics_seconds"])
+    if summary["best_index"] is not None:
+        print("Signal generation time at best params:", summary["signal_generation_time_array"][summary["best_index"]])
+        print("Change-point detection time at best params:", summary["change_point_detection_time_array"][summary["best_index"]])
+        print("Metrics computation time at best params:", summary["metrics_time_array"][summary["best_index"]])
