@@ -1,41 +1,165 @@
-import numpy as np
-from TemporalNetwork import ContTempNetwork
-from FlowStability import avg_norm_var_information
 import pickle
+
 import matplotlib.pyplot as plt
-import auxiliary_functions
-from sankeyflow import Sankey
+import numpy as np
 import pandas as pd
 
-selected_lamdas = np.logspace(-5,0,10)
+import auxiliary_functions
+from FlowStability import avg_norm_var_information
+from TemporalNetwork import ContTempNetwork
+from sankeyflow import Sankey
 
-Conditional_S_selected_hr = []
-for i, lamda in enumerate(selected_lamdas):
-    with open(f'//scratch/tmp/180/skoove/primaryschoolnet_rw/conditional_S_selected_hr/S_rate{lamda:.11f}', 'rb') as f:
-        S_rate = pickle.load(f)
-        Conditional_S_selected_hr.append(S_rate['S_rate'][f'{lamda:.11f}']) #(S[list(S.keys))[0]][0])
 
-net_rw = ContTempNetwork.load('/home/b/skoove/compute/entropy/paper_data/socio_pat_primary_school/primaryschoolnet',
-                              attributes_list=['node_to_label_dict',
-                      'events_table',
-                      'times',
-                      'time_grid',
-                      'num_nodes',
-                      '_overlapping_events_merged',
-                      'start_date',
-                      'node_label_array',
-                      'male_array',
-                      'female_array',
-                      'node_first_start_array',
-                      'node_last_end_array',
-                      'node_class_array',
-                      'datetimes'])
+ENTROPY_DIR = "//scratch/tmp/180/skoove/primaryschoolnet_rw/conditional_S_selected_hr"
+CLUSTER_DIR = "//scratch/tmp/180/skoove/primaryschoolnet_rw"
+NETWORK_PATH = (
+    "/home/b/skoove/compute/entropy/paper_data/socio_pat_primary_school/primaryschoolnet"
+)
+CSV_PATH = "/home/b/skoove/compute/entropy/paper_data/socio_pat_primary_school/primaryschool.csv"
 
-df = pd.read_csv('/home/b/skoove/compute/entropy/paper_data/socio_pat_primary_school/primaryschool.csv',
-                 header=None, sep='\t', names=['time','id1','id2','class1','class2'])
+SELECTED_LAMBDAS = np.logspace(-5, 0, 10)
+LAMBDAS_GROWING = np.logspace(-5, 0, 200)
+INTERVAL_CONFIGS = [
+    ("full", "clustersplot"),
+    ("0_240", "clustersplot0_240"),
+    ("240_600", "clustersplot240_600"),
+    ("600_960", "clustersplot600_960"),
+    ("960_1320", "clustersplot960_1320"),
+    ("1320_1556", "clustersplot1320_1556"),
+]
+BEST_CLUSTER_INDICES = {
+    "0_240": 170,
+    "240_600": 135,
+    "600_960": 180,
+    "960_1320": 125,
+    "1320_1556": 90,
+}
+TIME_LABELS = ["08:30", "10:30", "12:00", "14:00", "16:00"]
+TIME_LABEL_POSITIONS = [0.1, 0.3, 0.5, 0.7, 0.9]
 
-df['hour'] = df['time'] // 3600
-df['minute'] = (df['time'] % 3600) / 60
+
+def load_conditional_entropies(lambdas):
+    conditional_entropies = []
+    for lamda in lambdas:
+        path = f"{ENTROPY_DIR}/S_rate{lamda:.11f}"
+        with open(path, "rb") as handle:
+            s_rate = pickle.load(handle)
+        conditional_entropies.append(s_rate["S_rate"][f"{lamda:.11f}"])
+    return conditional_entropies
+
+
+def load_cluster_results(folder_name, lambdas):
+    cluster_results = {}
+    for lamda in lambdas:
+        path = f"{CLUSTER_DIR}/{folder_name}/cluster{lamda:.11f}"
+        with open(path, "rb") as handle:
+            cluster_results[lamda] = pickle.load(handle)
+    return cluster_results
+
+
+def summarize_clusters(cluster_results, lambdas):
+    avg_cluster_sizes = [
+        np.mean([len(cluster) for cluster in cluster_results[lamda] if len(cluster) > 1])
+        for lamda in lambdas
+    ]
+    nvi_values = [avg_norm_var_information(cluster_results[lamda]) for lamda in lambdas]
+    return avg_cluster_sizes, nvi_values
+
+
+def build_class_dict(net):
+    return {
+        school_class: set(net.node_array[net.node_class_array == school_class])
+        for school_class in np.unique(net.node_class_array)
+    }
+
+
+def build_flow_dataframe(source_comms, target_comms, class_dict):
+    flows = []
+    for school_class, class_nodes in class_dict.items():
+        for source_idx, source_comm in enumerate(source_comms):
+            for target_idx, target_comm in enumerate(target_comms):
+                value = len(class_nodes.intersection(source_comm).intersection(target_comm))
+                if value > 0:
+                    flows.append(
+                        {
+                            "source": source_idx,
+                            "target": target_idx,
+                            "type": school_class,
+                            "value": value,
+                        }
+                    )
+    return pd.DataFrame(flows)
+
+
+def offset_flow_columns(flow_frames):
+    adjusted_frames = []
+    current_offset = 0
+
+    for frame in flow_frames:
+        adjusted_frame = frame.copy()
+        adjusted_frame["source"] += current_offset
+        target_offset = int(adjusted_frame["source"].max() + 1)
+        adjusted_frame["target_label"] = adjusted_frame["target"] + target_offset
+        adjusted_frames.append(adjusted_frame)
+        current_offset = int(adjusted_frame["target_label"].max())
+
+    return adjusted_frames
+
+
+def build_sankey_nodes(flow_frames):
+    nodes = []
+    for frame in flow_frames:
+        nodes.append(
+            [
+                (node, frame.loc[frame["source"] == node, "value"].sum(), {"color": "black"})
+                for node in frame["source"].unique()
+            ]
+        )
+
+    last_frame = flow_frames[-1]
+    nodes.append(
+        [
+            (
+                node,
+                last_frame.loc[last_frame["target_label"] == node, "value"].sum(),
+                {"color": "black"},
+            )
+            for node in last_frame["target_label"].unique()
+        ]
+    )
+    return nodes
+
+
+Conditional_S_selected_hr = load_conditional_entropies(SELECTED_LAMBDAS)
+
+net_rw = ContTempNetwork.load(
+    NETWORK_PATH,
+    attributes_list=[
+        "node_to_label_dict",
+        "events_table",
+        "times",
+        "time_grid",
+        "num_nodes",
+        "_overlapping_events_merged",
+        "start_date",
+        "node_label_array",
+        "male_array",
+        "female_array",
+        "node_first_start_array",
+        "node_last_end_array",
+        "node_class_array",
+        "datetimes",
+    ],
+)
+
+df = pd.read_csv(
+    CSV_PATH,
+    header=None,
+    sep="\t",
+    names=["time", "id1", "id2", "class1", "class2"],
+)
+df["hour"] = df["time"] // 3600
+df["minute"] = (df["time"] % 3600) / 60
 
 net_times_hours = net_rw.times / 3600
 flag10 = np.argmax(net_times_hours > 10)
@@ -46,267 +170,109 @@ flagday1 = np.argmax(net_times_hours > 18)
 print(flag10, flag12, flag14, flag16, flagday1)
 
 
-lamdas_growing = np.logspace(-5,0,200)
+interval_results = {
+    label: load_cluster_results(folder_name, LAMBDAS_GROWING)
+    for label, folder_name in INTERVAL_CONFIGS
+}
+interval_summaries = {
+    label: summarize_clusters(cluster_results, LAMBDAS_GROWING)
+    for label, cluster_results in interval_results.items()
+}
 
-multi_res_rw = {}
-for lamda in lamdas_growing:
-    with open(f'//scratch/tmp/180/skoove/primaryschoolnet_rw/clustersplot/cluster{lamda:.11f}', 'rb') as f:
-        cluster = pickle.load(f)
-        
-    multi_res_rw[lamda] = cluster
-avg_nclusters_forw_rw = [np.mean([len(c) for c in \
-                   multi_res_rw[lamda] if len(c)>1]) for lamda in lamdas_growing]
-
-NVI_forw_rw = [avg_norm_var_information(multi_res_rw[lamda]) for lamda in lamdas_growing]
-
-
-multi_res_rw0_240 = {}
-for lamda in lamdas_growing:
-    with open(f'//scratch/tmp/180/skoove/primaryschoolnet_rw/clustersplot0_240/cluster{lamda:.11f}', 'rb') as f:
-        cluster = pickle.load(f)
-        
-    multi_res_rw0_240[lamda] = cluster
-avg_nclusters_forw_rw0_240 = [np.mean([len(c) for c in \
-                   multi_res_rw0_240[lamda] if len(c)>1]) for lamda in lamdas_growing]
-
-NVI_forw_rw0_240 = [avg_norm_var_information(multi_res_rw0_240[lamda]) for lamda in lamdas_growing]
-
-multi_res_rw240_600 = {}
-for lamda in lamdas_growing:
-    with open(f'//scratch/tmp/180/skoove/primaryschoolnet_rw/clustersplot240_600/cluster{lamda:.11f}', 'rb') as f:
-        cluster = pickle.load(f)
-        
-    multi_res_rw240_600[lamda] = cluster
-avg_nclusters_forw_rw240_600 = [np.mean([len(c) for c in \
-                   multi_res_rw240_600[lamda] if len(c)>1]) for lamda in lamdas_growing]
-
-NVI_forw_rw240_600 = [avg_norm_var_information(multi_res_rw240_600[lamda]) for lamda in lamdas_growing]
-
-multi_res_rw600_960 = {}
-for lamda in lamdas_growing:
-    with open(f'//scratch/tmp/180/skoove/primaryschoolnet_rw/clustersplot600_960/cluster{lamda:.11f}', 'rb') as f:
-        cluster = pickle.load(f)
-        
-    multi_res_rw600_960[lamda] = cluster
-avg_nclusters_forw_rw600_960 = [np.mean([len(c) for c in \
-                   multi_res_rw600_960[lamda] if len(c)>1]) for lamda in lamdas_growing]
-
-NVI_forw_rw600_960 = [avg_norm_var_information(multi_res_rw600_960[lamda]) for lamda in lamdas_growing]
-
-
-multi_res_rw960_1320 = {}
-for lamda in lamdas_growing:
-    with open(f'//scratch/tmp/180/skoove/primaryschoolnet_rw/clustersplot960_1320/cluster{lamda:.11f}', 'rb') as f:
-        cluster = pickle.load(f)
-        
-    multi_res_rw960_1320[lamda] = cluster
-avg_nclusters_forw_rw960_1320 = [np.mean([len(c) for c in \
-                   multi_res_rw960_1320[lamda] if len(c)>1]) for lamda in lamdas_growing]
-
-NVI_forw_rw960_1320 = [avg_norm_var_information(multi_res_rw960_1320[lamda]) for lamda in lamdas_growing]
-
-multi_res_rw960_1320 = {}
-for lamda in lamdas_growing:
-    with open(f'//scratch/tmp/180/skoove/primaryschoolnet_rw/clustersplot960_1320/cluster{lamda:.11f}', 'rb') as f:
-        cluster = pickle.load(f)
-        
-    multi_res_rw960_1320[lamda] = cluster
-avg_nclusters_forw_rw960_1320 = [np.mean([len(c) for c in \
-                   multi_res_rw960_1320[lamda] if len(c)>1]) for lamda in lamdas_growing]
-
-NVI_forw_rw960_1320 = [avg_norm_var_information(multi_res_rw960_1320[lamda]) for lamda in lamdas_growing]
-
-
-multi_res_rw1320_1556 = {}
-for lamda in lamdas_growing:
-    with open(f'//scratch/tmp/180/skoove/primaryschoolnet_rw/clustersplot1320_1556/cluster{lamda:.11f}', 'rb') as f:
-        cluster = pickle.load(f)
-        
-    multi_res_rw1320_1556[lamda] = cluster
-avg_nclusters_forw_rw1320_1556 = [np.mean([len(c) for c in \
-                   multi_res_rw1320_1556[lamda] if len(c)>1]) for lamda in lamdas_growing]
-
-NVI_forw_rw1320_1556 = [avg_norm_var_information(multi_res_rw1320_1556[lamda]) for lamda in lamdas_growing]
-
-bestcluster0_240 = multi_res_rw0_240[lamdas_growing[170]][0]
-bestcluster240_600 = multi_res_rw240_600[lamdas_growing[135]][0]
-bestcluster600_960 = multi_res_rw600_960[lamdas_growing[180]][0]
-bestcluster960_1320 = multi_res_rw960_1320[lamdas_growing[125]][0]
-bestcluster1320_1556 = multi_res_rw1320_1556[lamdas_growing[90]][0]
-bestclusters = [bestcluster0_240, bestcluster240_600, bestcluster600_960, bestcluster960_1320, bestcluster1320_1556]
-
-#%% make data for flow diagram
-
-source_comms = bestcluster0_240
-target_comms = bestcluster240_600
-class_dict = {clas : set(net_rw.node_array[net_rw.node_class_array == clas]) for \
-                  clas in np.unique(net_rw.node_class_array)}
-
-flows = []
-for clas, clas_set in class_dict.items():
-    for s, comm_s in enumerate(source_comms):
-        for t, comm_t in enumerate(target_comms):
-            val = len(clas_set.intersection(comm_s).intersection(comm_t))
-            if val > 0:
-                flows.append({'source': s, 'target': t, 'type': clas, 'value': val})
-
-df_flows0_600 = pd.DataFrame.from_dict(flows)
-
-#%% make data for flow diagram
-
-source_comms = bestcluster240_600
-target_comms = bestcluster600_960
-class_dict = {clas : set(net_rw.node_array[net_rw.node_class_array == clas]) for \
-                  clas in np.unique(net_rw.node_class_array)}
-
-flows = []
-for clas, clas_set in class_dict.items():
-    for s, comm_s in enumerate(source_comms):
-        for t, comm_t in enumerate(target_comms):
-            val = len(clas_set.intersection(comm_s).intersection(comm_t))
-            if val > 0:
-                flows.append({'source': s, 'target': t, 'type': clas, 'value': val})
-
-df_flows240_960 = pd.DataFrame.from_dict(flows)
- 
-#%% make data for flow diagram
-
-source_comms = bestcluster600_960
-target_comms = bestcluster960_1320
-class_dict = {clas : set(net_rw.node_array[net_rw.node_class_array == clas]) for \
-                  clas in np.unique(net_rw.node_class_array)}
-
-flows = []
-for clas, clas_set in class_dict.items():
-    for s, comm_s in enumerate(source_comms):
-        for t, comm_t in enumerate(target_comms):
-            val = len(clas_set.intersection(comm_s).intersection(comm_t))
-            if val > 0:
-                flows.append({'source': s, 'target': t, 'type': clas, 'value': val})
-
-df_flows600_1320 = pd.DataFrame.from_dict(flows)
-
-#%% make data for flow diagram
-
-source_comms = bestcluster960_1320
-target_comms = bestcluster1320_1556
-class_dict = {clas : set(net_rw.node_array[net_rw.node_class_array == clas]) for \
-                  clas in np.unique(net_rw.node_class_array)}
-
-flows = []
-for clas, clas_set in class_dict.items():
-    for s, comm_s in enumerate(source_comms):
-        for t, comm_t in enumerate(target_comms):
-            val = len(clas_set.intersection(comm_s).intersection(comm_t))
-            if val > 0:
-                flows.append({'source': s, 'target': t, 'type': clas, 'value': val})
-
-df_flows960_1556 = pd.DataFrame.from_dict(flows)
-
-df_flows0_600['target_label'] = df_flows0_600['target'] + int(np.max(df_flows0_600['source']) + 1)
-
-df_flows240_960['source'] = df_flows240_960['source'] + int(np.max(df_flows0_600['source']) + 1)
-df_flows240_960['target_label'] = df_flows240_960['target'] + int(np.max(df_flows240_960['source']) + 1)
-
-df_flows600_1320['source'] = df_flows600_1320['source'] + int(np.max(df_flows240_960['source']) + 1)
-df_flows600_1320['target_label'] = df_flows600_1320['target'] + int(np.max(df_flows600_1320['source']) + 1)
-
-df_flows960_1556['source'] = df_flows960_1556['source'] + int(np.max(df_flows600_1320['source']) + 1)
-df_flows960_1556['target_label'] = df_flows960_1556['target'] + int(np.max(df_flows960_1556['source']) + 1)
-
-df_flows = pd.concat([df_flows0_600, df_flows240_960, df_flows600_1320, df_flows960_1556], ignore_index=True)
-
-
-# Start creating the figure
-fig = plt.figure(figsize=(12, 4))  # Wider figure for all plots in one row
-gs = fig.add_gridspec(1, 3)  # Grid: 1 row, 4 columns
-
-# Column 1: Plot A
-ax_a = fig.add_subplot(gs[0, 0])
-
-#Plot 5
-list_colors = ['orange', 'coral', 'salmon', 'plum', 'orchid', 'purple', 'brown', 'olive', 'green', 'lightseagreen']
-
-for i, lamda in enumerate(selected_lamdas):
-    S = Conditional_S_selected_hr[i]
-    ax_a.plot(net_times_hours[0:1556], S[0:1556], color = list_colors[i], alpha = 0.30, label='lamda = ' + f'{lamda:.11f}')
-ax_a.set_xlabel('t')
-ax_a.set_title('(A) Conditional entropy H(pt | p0)', loc='left', fontsize=12)
-
-# Column 2: Plot B
-
-####### First Plot
-ax_b = fig.add_subplot(gs[0, 1])
-color = 'tab:red'
-ax_b.plot(lamdas_growing, NVI_forw_rw960_1320, color=color, label='static norm NVI')
-
-ax_b.set_xscale('log')
-ax_b.set_xlabel(r'$\lambda$ [s]')
-ax_b.set_ylabel('Avg. Norm. Var. Inf.', color=color)
-ax_b.tick_params(axis='y', labelcolor=color)
-ax_b.set_title("(B) Flow Stability - Sub-Interval", loc='left', fontsize=12)
-
-ax1 = ax_b.twinx()  # instantiate a second axes that shares the same x-axis
-
-color = 'tab:blue'
-ax1.plot(lamdas_growing, avg_nclusters_forw_rw960_1320, color=color, label='edge-centric')
-
-ax1.set_xlabel(r'$\lambda$ [s]')
-ax1.set_ylabel('Avg. no. clusters', color=color)  # we already handled the x-label with ax1
-ax1.tick_params(axis='y', labelcolor=color)
-
-# Column 3: Plot C (Square aspect ratio)
-
-# Sample data
-list_value = df_flows['value'].copy()
-list_value[df_flows['value'] == 1] = 1
-
-# Define the nodes and flows
-nodes = [
-    [(node, df_flows0_600[df_flows0_600['source'] == node]['value'].sum(), dict(color="black")) for node in df_flows0_600['source'].unique()],
-    [(node, df_flows240_960[df_flows240_960['source'] == node]['value'].sum(), dict(color="black")) for node in df_flows240_960['source'].unique()],
-    [(node, df_flows600_1320[df_flows600_1320['source'] == node]['value'].sum(), dict(color="black")) for node in df_flows600_1320['source'].unique()],
-    [(node, df_flows960_1556[df_flows960_1556['source'] == node]['value'].sum(), dict(color="black")) for node in df_flows960_1556['source'].unique()],
-    [(node, df_flows960_1556[df_flows960_1556['target_label'] == node]['value'].sum(), dict(color="black")) for node in df_flows960_1556['target_label'].unique()],
+bestclusters = [
+    interval_results[label][LAMBDAS_GROWING[best_index]][0]
+    for label, best_index in BEST_CLUSTER_INDICES.items()
 ]
 
-# Define colors for each link
+class_dict = build_class_dict(net_rw)
+flow_frames = [
+    build_flow_dataframe(source_comms, target_comms, class_dict)
+    for source_comms, target_comms in zip(bestclusters[:-1], bestclusters[1:])
+]
+flow_frames = offset_flow_columns(flow_frames)
+df_flows = pd.concat(flow_frames, ignore_index=True)
+
+
+fig = plt.figure(figsize=(12, 4))
+gs = fig.add_gridspec(1, 3)
+
+ax_a = fig.add_subplot(gs[0, 0])
+list_colors = auxiliary_functions.generate_plasma_colors(len(SELECTED_LAMBDAS))
+for color, lamda, entropy in zip(list_colors, SELECTED_LAMBDAS, Conditional_S_selected_hr):
+    ax_a.plot(
+        net_times_hours[:1556],
+        entropy[:1556],
+        color=color,
+        alpha=0.30,
+        label=f"lamda = {lamda:.11f}",
+    )
+ax_a.set_xlabel("t")
+ax_a.set_title("(A) Conditional entropy H(pt | p0)", loc="left", fontsize=12)
+
+ax_b = fig.add_subplot(gs[0, 1])
+nclusters_960_1320, nvi_960_1320 = interval_summaries["960_1320"]
+ax_b.plot(LAMBDAS_GROWING, nvi_960_1320, color="tab:red", label="static norm NVI")
+ax_b.set_xscale("log")
+ax_b.set_xlabel(r"$\lambda$ [s]")
+ax_b.set_ylabel("Avg. Norm. Var. Inf.", color="tab:red")
+ax_b.tick_params(axis="y", labelcolor="tab:red")
+ax_b.set_title("(B) Flow Stability - Sub-Interval", loc="left", fontsize=12)
+
+ax_b_right = ax_b.twinx()
+ax_b_right.plot(
+    LAMBDAS_GROWING,
+    nclusters_960_1320,
+    color="tab:blue",
+    label="edge-centric",
+)
+ax_b_right.set_xlabel(r"$\lambda$ [s]")
+ax_b_right.set_ylabel("Avg. no. clusters", color="tab:blue")
+ax_b_right.tick_params(axis="y", labelcolor="tab:blue")
+
+nodes = build_sankey_nodes(flow_frames)
 color_list = auxiliary_functions.generate_plasma_colors(11)
+dict_color = {
+    flow_type: color_list[i] for i, flow_type in enumerate(df_flows["type"].unique())
+}
+flows = [
+    (
+        row.source,
+        row.target_label,
+        row.value,
+        {"color": dict_color[row.type]},
+    )
+    for row in df_flows.itertuples()
+]
 
-dict_color = {df_type: color_list[i] for i, df_type in enumerate(df_flows['type'].unique())}
-link_colors = [dict_color[df_flows['type'][i]] for i in range(df_flows.shape[0])]
-
-flows = [(df_flows['source'][index], df_flows['target_label'][index], df_flows['value'][index], {'color': link_colors[index]}) for index in df_flows.index]
-
-# Adjust the Sankey diagram and add a custom x-axis
 ax_c = fig.add_subplot(gs[0, 2])
-s = Sankey(flows=flows, nodes=nodes, node_opts=dict(label_format=''))
+sankey = Sankey(flows=flows, nodes=nodes, node_opts={"label_format": ""})
+sankey.draw()
 
-# Draw the Sankey diagram
-s.draw()
+for x_pos, label in zip(TIME_LABEL_POSITIONS, TIME_LABELS):
+    ax_c.text(x_pos, -0.05, label, fontsize=10, ha="center", transform=ax_c.transAxes)
 
-# Add custom x-axis labels manually
-time_labels = ["08:30", "10:30", "12:00", "14:00", "16:00"]
-x_positions = [0.1, 0.3, 0.5, 0.7, 0.9]  # Adjust based on diagram layout
-
-# Add labels using ax.text for precise control
-for x_pos, label in zip(x_positions, time_labels):
-    ax_c.text(x_pos, -0.05, label, fontsize=10, ha='center', transform=ax_c.transAxes)
-
-
-# Create legend
-handles = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=dict_color[df_type], markersize=10)
-           for df_type in df_flows['type'].unique()]
-
-
-ax_c.legend(handles, df_flows['type'].unique(), title='Flow Types', loc='center left', bbox_to_anchor=(1, 0.5))
-ax_c.set_title("(C) Community Evolution - Primary School", loc='left', fontsize=12)
+handles = [
+    plt.Line2D(
+        [0],
+        [0],
+        marker="o",
+        color="w",
+        markerfacecolor=dict_color[flow_type],
+        markersize=10,
+    )
+    for flow_type in df_flows["type"].unique()
+]
+ax_c.legend(
+    handles,
+    df_flows["type"].unique(),
+    title="Flow Types",
+    loc="center left",
+    bbox_to_anchor=(1, 0.5),
+)
+ax_c.set_title("(C) Community Evolution - Primary School", loc="left", fontsize=12)
 ax_c.set_yticks([])
 ax_c.set_frame_on(False)
 
-
-
-# Adjust layout and display
 plt.tight_layout()
-#plt.savefig('/home/b/skoove/Desktop/ChangePointDetection/fig_entropy_inf_community.pdf', format='pdf', dpi=300, bbox_inches='tight')
+# plt.savefig('/home/b/skoove/Desktop/ChangePointDetection/fig_entropy_inf_community.pdf', format='pdf', dpi=300, bbox_inches='tight')
 plt.show()
