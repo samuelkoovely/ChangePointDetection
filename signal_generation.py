@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Sequence
 import pickle
+import time
 
 import numpy as np
 
@@ -189,18 +190,95 @@ def compute_signals_for_lambda(
     the expensive lambda-specific preprocessing is performed once, then the
     signal is computed for every requested window.
     """
+    results, _ = _compute_signals_for_lambda_impl(
+        net=net,
+        lamda=lamda,
+        windows=windows,
+        sample_fraction=sample_fraction,
+        p0=p0,
+        measure_time=False,
+    )
+    return results
+
+
+def compute_signals_for_lambda_timed(
+    net: Any,
+    lamda: float,
+    windows: Sequence[float] = DEFAULT_WINDOWS,
+    sample_fraction: float = DEFAULT_SAMPLE_FRACTION,
+    p0: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """
+    Compute entropy signals for one lambda and return a timing breakdown.
+
+    The returned timing separates the shared lambda preprocessing from the
+    window-specific signal computation. An attributed per-window timing is also
+    provided by spreading the shared preprocessing cost uniformly across the
+    requested windows.
+    """
+    results, timing = _compute_signals_for_lambda_impl(
+        net=net,
+        lamda=lamda,
+        windows=windows,
+        sample_fraction=sample_fraction,
+        p0=p0,
+        measure_time=True,
+    )
+    return {
+        "signals_by_window": results,
+        "timing": timing,
+    }
+
+
+def _compute_signals_for_lambda_impl(
+    net: Any,
+    lamda: float,
+    windows: Sequence[float],
+    sample_fraction: float,
+    p0: np.ndarray | None,
+    measure_time: bool,
+) -> tuple[dict[float, dict[str, Any]], dict[str, Any] | None]:
+    """
+    Shared implementation for signal generation with optional timing capture.
+    """
+    if measure_time:
+        t_preprocessing_start = time.perf_counter()
     compute_inter_transition_matrices_for_lambda(net, lamda)
+    if measure_time:
+        preprocessing_seconds = time.perf_counter() - t_preprocessing_start
 
     results: dict[float, dict[str, Any]] = {}
+    window_signal_seconds: dict[float, float] = {}
     for window in windows:
-        results[float(window)] = compute_window_entropy_signal(
+        window_key = float(window)
+        if measure_time:
+            t_window_start = time.perf_counter()
+        results[window_key] = compute_window_entropy_signal(
             net=net,
             lamda=lamda,
             window=window,
             sample_fraction=sample_fraction,
             p0=p0,
         )
-    return results
+        if measure_time:
+            window_signal_seconds[window_key] = time.perf_counter() - t_window_start
+
+    if not measure_time:
+        return results, None
+
+    num_windows = len(results)
+    shared_preprocessing_seconds = preprocessing_seconds / num_windows if num_windows > 0 else 0.0
+    attributed_per_window_seconds = {
+        window: window_signal_seconds[window] + shared_preprocessing_seconds
+        for window in results
+    }
+
+    return results, {
+        "preprocessing_seconds": preprocessing_seconds,
+        "window_signal_seconds": window_signal_seconds,
+        "attributed_per_window_seconds": attributed_per_window_seconds,
+        "total_seconds": preprocessing_seconds + float(sum(window_signal_seconds.values())),
+    }
 
 
 # -----------------------------------------------------------------------------
