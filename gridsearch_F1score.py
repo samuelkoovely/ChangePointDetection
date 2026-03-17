@@ -427,7 +427,7 @@ if __name__ == "__main__":
         windows=windows,
         margin=margin,
         n_jobs=n_jobs,
-        outdir="./gridsearch_results",
+        outdir="./gridsearch_results/block2activities",
         sample_fraction=0.01,
         kernel="linear",
         save_signals=True,
