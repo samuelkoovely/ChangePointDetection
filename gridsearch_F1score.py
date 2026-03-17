@@ -21,7 +21,7 @@ import ruptures as rpt
 from joblib import Parallel, delayed
 
 from evaluation_metrics import f1_score, hausdorff_distance
-from signal_generation import compute_signals_for_lambda
+from signal_generation import compute_signals_for_lambda, save_signal_result
 
 
 # -----------------------------------------------------------------------------
@@ -112,12 +112,19 @@ def evaluate_lambda(
     sample_fraction: float = 0.1,
     kernel: str = "linear",
     p0: np.ndarray | None = None,
+    save_signals: bool = False,
+    signals_outdir: str | Path | None = None,
+    signal_dir_order: str = "lambda_window",
 ) -> dict:
     """
     Evaluate all candidate windows for one lambda value.
 
     The lambda-dependent preprocessing is performed once per sample and then
     reused across all window values.
+
+    If requested, the generated entropy signals are also saved to disk in an
+    ordered folder layout, either `outdir / lambda / window` or
+    `outdir / window / lambda`.
     """
     windows = [float(w) for w in windows]
 
@@ -141,7 +148,12 @@ def evaluate_lambda(
     hausdorff_accumulator = {float(window): [] for window in windows}
     preds_accumulator = {float(window): [] for window in windows}
 
-    for sample in samples:
+    if signal_dir_order not in {"lambda_window", "window_lambda"}:
+        raise ValueError(
+            "signal_dir_order must be either 'lambda_window' or 'window_lambda'."
+        )
+
+    for sample_idx, sample in enumerate(samples):
         t_signal_start = time.perf_counter()
         signals_by_window = compute_signals_for_lambda(
             net=sample.data,
@@ -155,6 +167,18 @@ def evaluate_lambda(
 
         for window in windows:
             signal_result = signals_by_window[float(window)]
+
+            if save_signals and signals_outdir is not None:
+                lamda_dir = f"lambda_{lamda:.11f}"
+                window_dir = f"window_{window:g}"
+                sample_dir = sample.name if sample.name is not None else f"sample_{sample_idx}"
+
+                if signal_dir_order == "lambda_window":
+                    signal_outdir = Path(signals_outdir) / sample_dir / lamda_dir / window_dir
+                else:
+                    signal_outdir = Path(signals_outdir) / sample_dir / window_dir / lamda_dir
+
+                save_signal_result(signal_result, signal_outdir)
 
             signal_window_start = time.perf_counter()
             _ = signal_result
@@ -239,12 +263,19 @@ def grid_search_f1(
     sample_fraction: float = 0.1,
     kernel: str = "linear",
     p0: np.ndarray | None = None,
+    save_signals: bool = False,
+    signals_outdir: str | Path | None = None,
+    signal_dir_order: str = "lambda_window",
 ) -> dict:
     """
     Run a parallel grid-search over all (lambda, window) pairs.
 
     Parallelization is done over lambda values so that the expensive
     lambda-dependent preprocessing can be reused across all window values.
+
+    Optionally, the generated entropy signals can be saved to disk during the
+    grid-search in a structured layout, either grouped first by lambda or first
+    by window.
     """
     lambdas = np.asarray(lambdas, dtype=float)
     windows = np.asarray(windows, dtype=float)
@@ -259,6 +290,9 @@ def grid_search_f1(
             sample_fraction=sample_fraction,
             kernel=kernel,
             p0=p0,
+            save_signals=save_signals,
+            signals_outdir=signals_outdir,
+            signal_dir_order=signal_dir_order,
         )
         for lamda in lambdas
     )
@@ -325,6 +359,9 @@ def grid_search_f1(
         "margin": float(margin),
         "sample_fraction": float(sample_fraction),
         "kernel": kernel,
+        "save_signals": save_signals,
+        "signals_outdir": str(signals_outdir) if signals_outdir is not None else None,
+        "signal_dir_order": signal_dir_order,
         "score_array": score_array,
         "f1_array": score_array,
         "hausdorff_array": hausdorff_array,
@@ -379,6 +416,11 @@ if __name__ == "__main__":
         for i, entry in enumerate(dataset)
     ]
 
+    # Generated entropy signals can optionally be saved while running the grid-search.
+    # With `signal_dir_order="lambda_window"`, the layout is:
+    #     signals_outdir / sample_name / lambda_xxx / window_x
+    # With `signal_dir_order="window_lambda"`, the layout is:
+    #     signals_outdir / sample_name / window_x / lambda_xxx
     summary = grid_search_f1(
         samples=training_samples,
         lambdas=lambdas,
@@ -388,6 +430,9 @@ if __name__ == "__main__":
         outdir="./gridsearch_results",
         sample_fraction=0.01,
         kernel="linear",
+        save_signals=True,
+        signals_outdir="./gridsearch_results/signals",
+        signal_dir_order="lambda_window",
     )
 
     print("Number of samples:", len(training_samples))
@@ -400,6 +445,9 @@ if __name__ == "__main__":
     print("Total signal generation time:", summary["total_signal_generation_seconds"])
     print("Total change-point detection time:", summary["total_change_point_detection_seconds"])
     print("Total metrics computation time:", summary["total_metrics_seconds"])
+    print("Signals saved:", summary["save_signals"])
+    print("Signals output directory:", summary["signals_outdir"])
+    print("Signals directory order:", summary["signal_dir_order"])
     if summary["best_index"] is not None:
         print("Signal generation time at best params:", summary["signal_generation_time_array"][summary["best_index"]])
         print("Change-point detection time at best params:", summary["change_point_detection_time_array"][summary["best_index"]])
