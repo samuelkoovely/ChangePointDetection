@@ -30,11 +30,7 @@ from scipy.linalg import expm as d_expm
 from scipy.linalg import logm as d_logm
 from scipy.sparse.csgraph import connected_components
 import gzip
-from SparseStochMat import sparse_stoch_mat, inplace_csr_row_normalize
-
-from parallel_expm import compute_subspace_expm_parallel
-
-from functools import partial
+from SparseStochMat import inplace_csr_row_normalize
 
 import time
 import pickle
@@ -380,8 +376,7 @@ class ContTempNetwork(object):
             if `save_delta` is True, creates delta_inter_T if it is 
             not already present and saves it together with 
             inter_T[lamda][0] in a pickle file.
-            otherwise, saves inter_T[lamda] directly (good if used with
-            sparse_stoch_matrices).
+            otherwise, saves inter_T[lamda] directly.
             
             Parameters:
             -----------
@@ -402,8 +397,7 @@ class ContTempNetwork(object):
                 If True, creates delta_inter_T if it is 
                 not already present and saves it together with 
                 inter_T[lamda][0]. Only the differences between two consecutives
-                inter_Ts are saved in order to minimize file size. 
-                Must not be used if `use_sparse_stoch` was used in `compute_inter_transition_matrices`.
+                inter_Ts are saved in order to minimize file size.
             replace_existing: bool
                 If True, erase and replace files if they already exists. 
                 Default is False.
@@ -451,10 +445,6 @@ class ContTempNetwork(object):
             save_dict['_compute_times'] = self._compute_times
             
             if save_delta:
-                assert not isinstance(self.inter_T[lamda][0], 
-                                  sparse_stoch_mat),\
-                                "inter_T must not be sparse_stoch_mat"
-                
                 if not hasattr(self, 'delta_inter_T') and \
                                     hasattr(self, 'inter_T'):
                     if lamda is not None:
@@ -492,7 +482,6 @@ class ContTempNetwork(object):
             else:
                 
                 save_dict['inter_T'] = dict()
-                save_dict['is_sparse_stoch'] = True
                 
                 if lamda is None:
                     lamdas = self.inter_T.keys()
@@ -500,17 +489,14 @@ class ContTempNetwork(object):
                     lamdas = [lamda]
                 
                 for lamda in lamdas:
-                    assert isinstance(self.inter_T[lamda][0], 
-                                      sparse_stoch_mat),\
-                                    "inter_T needs to be sparse_stoch_mat"
-                    
                     save_dict['inter_T'][lamda] = []
                     for interT in self.inter_T[lamda]:
+                        T = interT.copy()
                         if round_zeros:
-                            interT.set_to_zeroes(tol)
-                        save_dict['inter_T'][lamda].append(interT.to_dict())
+                            set_to_zeroes(T, tol=tol)
+                        save_dict['inter_T'][lamda].append(T)
     
-                text = "sparse stoch trans mats"
+                text = "csr trans mats"
                 
                 
             if compressed:
@@ -528,6 +514,127 @@ class ContTempNetwork(object):
                     pickle.dump(save_dict, fopen)
                     
         
+            
+            
+    def save_inter_T_lin(self, filename, lamda=None, round_zeros=True, tol=1e-8,
+                                   compressed=False,
+                                   replace_existing=True,
+                                   save_delta=False):
+        """ creates delta_inter_T_lin if it is not already present and 
+            saves it together with inter_T_lin[lamda][t_s][0] in a pickle file.
+                        
+        """
+        assert hasattr(self, 'inter_T_lin'), f'PID {os.getpid()} : nothing saved, compute inter_T_lin first.'
+
+
+        ext = os.path.splitext(filename)[-1]
+
+        file = filename
+            
+        if compressed:                            
+            if ext != '.gz':
+                file += '.gz'
+        else:
+            if ext != '.pickle':
+                file += '.pickle'
+                
+        skipping = False
+        if os.path.exists(file):
+            if replace_existing:
+                print('PID ', os.getpid(), f' : , file {file} already exists, replacing it.')
+            else:
+                print('PID ', os.getpid(), f' : , file {file} already exists, skipping.')
+                skipping = True
+            
+        if not skipping:
+
+            save_dict = {}
+            save_dict['_k_start_laplacians'] = self._k_start_laplacians
+            save_dict['_k_stop_laplacians'] = self._k_stop_laplacians
+            save_dict['_t_start_laplacians'] = self._t_start_laplacians
+            save_dict['_t_stop_laplacians'] = self._t_stop_laplacians
+            save_dict['times_k_start_to_k_stop+1'] = self.times.values[\
+                                self._k_start_laplacians:self._k_stop_laplacians+1]
+    
+            save_dict['num_nodes'] = self.num_nodes
+            save_dict['_compute_times'] = self._compute_times
+           
+            if save_delta:
+                if not hasattr(self, 'delta_inter_T_lin') and \
+                                    hasattr(self, 'inter_T_lin'):
+                    if lamda is not None:
+                        self._compute_delta_trans_mat(lamda, round_zeros=round_zeros,
+                                                      tol=tol)
+                    else:
+                        #computes it for all lamda
+                        for lamda in self.inter_T_lin.keys():
+                            self._compute_delta_trans_mat(lamda, round_zeros=round_zeros,
+                                                      tol=tol)
+        
+                if (lamda is not None) and (lamda not in self.delta_inter_T_lin.keys()):
+                    self._compute_delta_trans_mat(lamda, round_zeros=round_zeros,
+                                                      tol=tol)
+                    
+                    
+                if hasattr(self, 'delta_inter_T_lin'):
+                    
+                    
+                    save_dict['inter_T_lin'] = dict()
+                    save_dict['is_delta_trans'] = True
+                    
+                    if lamda is None:
+                        lamdas = self.delta_inter_T_lin.keys()
+                    else:
+                        lamdas = [lamda]
+                    
+                    for lamda in lamdas:
+                        save_dict['inter_T_lin'][lamda] = dict()
+                        for t_s in self.inter_T_lin[lamda].keys():
+                            save_dict['inter_T_lin'][lamda][t_s] = dict()    
+                            save_dict['inter_T_lin'][lamda][t_s]['delta_inter_T_lin'] = self.delta_inter_T_lin[lamda][t_s]
+                            save_dict['inter_T_lin'][lamda][t_s]['trans_mat_lin0'] = self.inter_T_lin[lamda][t_s][0].copy()
+                            if round_zeros:
+                                set_to_zeroes(save_dict['inter_T_lin'][lamda][t_s]['trans_mat_lin0'],
+                                          tol=tol)
+                                
+                text = "delta trans mats"
+    
+            else:
+                
+                save_dict['inter_T_lin'] = dict()
+                
+                if lamda is None:
+                    lamdas = self.inter_T_lin.keys()
+                else:
+                    lamdas = [lamda]
+                
+                for lamda in lamdas:
+                    save_dict['inter_T_lin'][lamda] = dict()
+                    for t_s in self.inter_T_lin[lamda].keys():
+                        save_dict['inter_T_lin'][lamda][t_s] = []
+                        for interT in self.inter_T_lin[lamda][t_s]:
+                            T = interT.copy()
+                            if round_zeros:
+                                set_to_zeroes(T, tol=tol)
+                            save_dict['inter_T_lin'][lamda][t_s].append(T)
+    
+                text = "csr trans mats"
+                
+
+            
+            if compressed:            
+                
+                print('PID ', os.getpid(), ' : ',' saving ' + text + ' to ' + file)
+                
+                with gzip.open(file, 
+                               'wb', compresslevel=2) as fopen:
+                    pickle.dump(save_dict, fopen) 
+            else:        
+                
+                print('PID ', os.getpid(), ' : ',' saving ' + text + ' to ' + file)
+                
+                with open(file, 'wb') as fopen:
+                    pickle.dump(save_dict, fopen)
 
     
     @staticmethod 
@@ -580,17 +687,20 @@ class ContTempNetwork(object):
                 
                 for lamda in load_dict['inter_T'].keys():
                     return_dict['inter_T'][lamda] = \
-                        [sparse_stoch_mat(**mat_dict) for mat_dict in \
+                        [_csr_from_legacy_transition_dict(mat_dict) for mat_dict in \
                                           load_dict['inter_T'][lamda]]
         
             else:
                 for lamda in load_dict['inter_T'].keys():
-                    return_dict['inter_T'][lamda] = \
-                        [load_dict['inter_T'][lamda]['trans_mat0']]
-                        
-                    for dT in load_dict['inter_T'][lamda]['delta_inter_T']:
-                        return_dict['inter_T'][lamda].append(\
-                                 return_dict['inter_T'][lamda][-1] + dT)
+                    if isinstance(load_dict['inter_T'][lamda], list):
+                        return_dict['inter_T'][lamda] = load_dict['inter_T'][lamda]
+                    else:
+                        return_dict['inter_T'][lamda] = \
+                            [load_dict['inter_T'][lamda]['trans_mat0']]
+                            
+                        for dT in load_dict['inter_T'][lamda]['delta_inter_T']:
+                            return_dict['inter_T'][lamda].append(\
+                                     return_dict['inter_T'][lamda][-1] + dT)
             
             
         if 'inter_T_lin' in load_dict.keys():
@@ -604,7 +714,7 @@ class ContTempNetwork(object):
                     for t_s in load_dict['inter_T_lin'][lamda].keys():
     
                         return_dict['inter_T_lin'][lamda][t_s] = \
-                            [sparse_stoch_mat(**mat_dict) for mat_dict in \
+                            [_csr_from_legacy_transition_dict(mat_dict) for mat_dict in \
                                               load_dict['inter_T_lin'][lamda][t_s]]
             
             else:               
@@ -612,13 +722,16 @@ class ContTempNetwork(object):
                     return_dict['inter_T_lin'][lamda] = dict()
                     
                     for t_s in load_dict['inter_T_lin'][lamda].keys():
-    
-                        return_dict['inter_T_lin'][lamda][t_s] = \
-                            [load_dict['inter_T_lin'][lamda][t_s]['trans_mat_lin0']]
-                            
-                        for dT in load_dict['inter_T_lin'][lamda][t_s]['delta_inter_T_lin']:
-                            return_dict['inter_T_lin'][lamda][t_s].append(\
-                                     return_dict['inter_T_lin'][lamda][t_s][-1]+dT)
+                        if isinstance(load_dict['inter_T_lin'][lamda][t_s], list):
+                            return_dict['inter_T_lin'][lamda][t_s] = \
+                                load_dict['inter_T_lin'][lamda][t_s]
+                        else:
+                            return_dict['inter_T_lin'][lamda][t_s] = \
+                                [load_dict['inter_T_lin'][lamda][t_s]['trans_mat_lin0']]
+                                
+                            for dT in load_dict['inter_T_lin'][lamda][t_s]['delta_inter_T_lin']:
+                                return_dict['inter_T_lin'][lamda][t_s].append(\
+                                         return_dict['inter_T_lin'][lamda][t_s][-1]+dT)
                 
 
 
@@ -631,8 +744,6 @@ class ContTempNetwork(object):
         """ 
             saves a dict with 'T' as key and net.T as item with other 
             useful attributes.
-            
-            also works with sparse_stoch_mat.
             
             only works if net.T[lamda] is a matrix and not a list of matrices,
             i.e. if compute_transition_matrices was ran without save_intermediate.
@@ -659,31 +770,17 @@ class ContTempNetwork(object):
         else:
             lamdas = [lamda]
         
+        text = 'csr T'
         for lamda in lamdas:
-            if isinstance(self.T[lamda], sparse_stoch_mat):
-                save_dict['is_sparse_stoch'] = True
-                if round_zeros:
-                    T = self.T[lamda].copy()
-                    T.set_to_zeroes(tol)
-                else:
-                    T = self.T[lamda]
-                save_dict['T'][lamda] = T.to_dict()
-                
-                text = 'sparse_stoch_mat T'
-                    
-            elif isspmatrix_csr(self.T[lamda]):
-                
-                if round_zeros:
-                    T = self.T[lamda].copy()
-                    set_to_zeroes(T, tol)
-                else:
-                    T = self.T[lamda]
-                save_dict['T'][lamda] = T
-                
-                text = 'csr T'
-                
+            if not isspmatrix_csr(self.T[lamda]):
+                raise TypeError('T must be csr.')
+            
+            if round_zeros:
+                T = self.T[lamda].copy()
+                set_to_zeroes(T, tol)
             else:
-                raise TypeError('T must be csr or sparse_stoch_mat.')
+                T = self.T[lamda]
+            save_dict['T'][lamda] = T
             
             
         ext = os.path.splitext(filename)[-1]
@@ -716,8 +813,6 @@ class ContTempNetwork(object):
             saves a dict with 'T_lin' as key and net.T_lin as item with other 
             useful attributes.
             
-            also works with sparse_stoch_mat.
-            
             only works if net.T_lin[lamda][t_s] is a matrix and not a list of matrices,
             i.e. if compute_transition_matrices was ran without save_intermediate.
                         
@@ -742,35 +837,20 @@ class ContTempNetwork(object):
         else:
             lamdas = [lamda]
         
+        text = 'csr T_lin'
         for lamda in lamdas:
             save_dict['T_lin'][lamda] = dict()
             for t_s in self.T_lin[lamda].keys():
                 
-                if isinstance(self.T_lin[lamda][t_s], sparse_stoch_mat):
-                    save_dict['is_sparse_stoch'] = True
-                    if round_zeros:
-                        T = self.T_lin[lamda][t_s].copy()
-                        T.set_to_zeroes(tol)
-                    else:
-                        T = self.T_lin[lamda][t_s]
-                    
-                    save_dict['T_lin'][lamda][t_s] = T.to_dict()
-                    
-                    text = 'sparse_stoch_mat T_lin'
-                        
-                elif isspmatrix_csr(self.T_lin[lamda][t_s]):
-                    
-                    if round_zeros:
-                        T = self.T_lin[lamda][t_s].copy()
-                        set_to_zeroes(T, tol)
-                    else:
-                        T = self.T_lin[lamda][t_s]
-                    save_dict['T_lin'][lamda][t_s] = T
-                    
-                    text = 'csr T_lin'
-                    
+                if not isspmatrix_csr(self.T_lin[lamda][t_s]):
+                    raise TypeError('T must be csr.')
+                
+                if round_zeros:
+                    T = self.T_lin[lamda][t_s].copy()
+                    set_to_zeroes(T, tol)
                 else:
-                    raise TypeError('T must be csr or sparse_stoch_mat.')
+                    T = self.T_lin[lamda][t_s]
+                save_dict['T_lin'][lamda][t_s] = T
             
             
         ext = os.path.splitext(filename)[-1]
@@ -847,7 +927,7 @@ class ContTempNetwork(object):
                 
                 for lamda in load_dict['T'].keys():
                     return_dict['T'][lamda] = \
-                        sparse_stoch_mat(**load_dict['T'][lamda])
+                        _csr_from_legacy_transition_dict(load_dict['T'][lamda])
         
             else:
                 for lamda in load_dict['T'].keys():
@@ -865,7 +945,7 @@ class ContTempNetwork(object):
                     for t_s in load_dict['T_lin'][lamda].keys():
     
                         return_dict['T_lin'][lamda][t_s] = \
-                            sparse_stoch_mat(**load_dict['T_lin'][lamda][t_s])
+                            _csr_from_legacy_transition_dict(load_dict['T_lin'][lamda][t_s])
             
             else:               
                 for lamda in load_dict['T_lin'].keys():
@@ -975,7 +1055,9 @@ class ContTempNetwork(object):
             else:
                 t = self.times[self.times <= t].max()
             
-        k = int(np.where(self.times == t)[0])
+        idx = np.where(self.times == t)[0]
+        k = idx.item()
+        #k = int(np.where(self.times == t)[0])
         
         return t, k
         
@@ -1274,7 +1356,6 @@ class ContTempNetwork(object):
     def compute_inter_transition_matrices(self, lamda=None, t_start=None, t_stop=None,
                                     verbose=False,
                                     fix_tau_k=False,
-                                    use_sparse_stoch=False,
                                     dense_expm=True,
                                     random_walk=True):
         """
@@ -1313,17 +1394,11 @@ class ContTempNetwork(object):
             This decouples the dynamic scale from the length of event which
             is useful for temporal networks with instantaneous events.
             The default is False.
-        use_sparse_stoch : bool, optional
-            Whether to use custom sparse stochastic matrix format to save the
-            inter transition matrices. Especially useful for large networks as 
-            the matrix exponential is then computed on each connected component 
-            separately (more memory efficient). The default is False.
         dense_expm : bool, optional
             Whether to use the dense version of the matrix exponential algorithm
             at each time steps. Recommended for not too large networks. 
             The inter trans. matrices are still saved as sparse scipy matrices
-            as they usually have many zero values. The default is True. Has no
-            effect is use_sparse_stoch is True.
+            as they usually have many zero values. The default is True.
 
         Returns
         -------
@@ -1364,30 +1439,22 @@ class ContTempNetwork(object):
                 else:
                     tau_k = self.times[self._k_start_laplacians+k+1] - tk
                 
-                if use_sparse_stoch:
-                    self.inter_T[lamda].append(sparse_lapl_expm(self.laplacians[k],
-                                                                       tau_k*lamda,
-                                                                       dense_expm=dense_expm))
+                if self.laplacians[k].getnnz() == 0:
+                    # expm of zero = identity
+                    self.inter_T[lamda].append(eye(self.num_nodes,format='csr'))
                 else:
-                    if self.laplacians[k].getnnz() == 0:
-                        # expm of zero = identity
-                        self.inter_T[lamda].append(eye(self.num_nodes,format='csr'))
+                    if dense_expm:
+                        self.inter_T[lamda].append(csr_matrix(expm(-tau_k*lamda*self.laplacians[k].toarray())))
                     else:
-                        if dense_expm:
-                            self.inter_T[lamda].append(csr_matrix(expm(-tau_k*lamda*self.laplacians[k].toarray())))
-                        else:
-                            self.inter_T[lamda].append(expm(-tau_k*lamda*self.laplacians[k]).tocsr())
+                        self.inter_T[lamda].append(expm(-tau_k*lamda*self.laplacians[k]).tocsr())
         
             if len(self.inter_T[lamda]) == 0:
                 if verbose:
                     print('PID ', os.getpid(), ' no events, trans. matrix = identity')
                 # is there was no event, the transition is identity
-                if use_sparse_stoch:
-                    self.inter_T[lamda].append(sparse_stoch_mat.create_diag(size=self.num_nodes))
-                else:
-                    self.inter_T[lamda].append(eye(self.num_nodes, 
-                                                      dtype=np.float64,
-                                                      format='csr'))
+                self.inter_T[lamda].append(eye(self.num_nodes, 
+                                                  dtype=np.float64,
+                                                  format='csr'))
                 
             t_end = time.time()-t0
             
@@ -1399,7 +1466,99 @@ class ContTempNetwork(object):
             if verbose:
                 print('PID ', os.getpid(), ' : ','Interevent transition matrices already computed for lamda={0}'.format(lamda))
             
-    
+    def compute_lin_inter_transition_matrices(self, lamda=None, t_start=None, t_stop=None,
+                                    verbose=False, t_s=10,
+                                    fix_tau_k=False):
+        """ compute interevent transition matrices as a linear approximation of 
+            expm(-tau_k*lamda*L_k) based on the discrete time transition matrix.
+            
+            `t_s` is the time value for which the linear approximation reaches the
+            stationary transition matrix (default is `t_s=10`).
+        
+            The transition matrix T_k_lin is saved in 
+            `self.inter_T_lin[lamda][t_s][k]`,
+            where `self.inter_T_lin` is a dictionary with lamda as keys and
+            lists of transition matrices as values.
+            
+            will compute from self.times[self._k_start_laplacians]
+            until self.times[self._k_stop_laplacians-1]
+            
+            the transition matrix at step k, is the probability transition matrix
+            between times[k] and times[k+1]
+            
+        """
+        
+        I = eye(self.num_nodes,
+                dtype=np.float64, format='csr')
+            
+        if not hasattr(self, '_stationary_trans'):
+            self._compute_stationary_transition(t_start=t_start, t_stop=t_stop,
+                                            verbose=verbose)
+            
+        if not hasattr(self, 'inter_T_lin'):
+            self.inter_T_lin = dict()
+        
+        if lamda is None:
+            if verbose:
+                print('PID ', os.getpid(), ' : ','taking lamda as 1/tau_w with tau_w = median interevent time')
+            lamda = 1/np.median(np.diff(self.times))
+        
+        compute = True
+        
+        if lamda in self.inter_T_lin.keys():
+            if t_s in self.inter_T_lin[lamda].keys():
+                compute = False
+                if verbose:
+                    print('PID ', os.getpid(), ' : ','Interevent transition matrices already computed ' +\
+                          'for lamda={0}, t_s={1}'.format(lamda,t_s))
+            
+        if compute:
+            if lamda not in self.inter_T_lin.keys():
+                self.inter_T_lin[lamda] = dict()
+                self.inter_T_lin[lamda][t_s] = []
+            else:
+                self.inter_T_lin[lamda][t_s] = []
+                                    
+            if verbose:
+                print('PID ', os.getpid(), ' : ','Computing interevent linear transition matrices for ' +\
+                      'lamda={0}, t_s={1}'.format(lamda,t_s))
+                
+            t0 = time.time()
+            for k, tk in enumerate(self.times[self._k_start_laplacians:
+                                              self._k_stop_laplacians]):
+                if verbose and not k%1000:
+                    print('PID ', os.getpid(), ' : ',k, ' over ' , 
+                          self._k_stop_laplacians-1-self._k_start_laplacians)
+                    print(f'PID {os.getpid()} : {time.time()-t0:.2f}s')
+                    
+                if fix_tau_k:
+                    tau_k = 1.0
+                else:
+                    tau_k = self.times[self._k_start_laplacians+k+1] - tk
+                    
+                Lcsr = self.laplacians[k].tocsr()
+                
+                self.inter_T_lin[lamda][t_s].append(\
+                       lin_approx_trans_matrix(I - Lcsr,
+                                               tau_k*lamda,
+                                               Pi=self._stationary_trans[k],
+                                               t_s=t_s))
+                        
+            if len(self.inter_T_lin[lamda][t_s]) == 0:
+                if verbose:
+                    print('PID ', os.getpid(), ' no events, lin. trans. matrix = identity')
+                # is there was no event, the transition is identity
+                self.inter_T_lin[lamda][t_s].append(eye(self.num_nodes, 
+                                                  dtype=np.float64,
+                                                  format='csr'))
+                
+            t_end = time.time()-t0
+            self._compute_times['tran_matrices_lin_{0}_{1}'.format(lamda,t_s)] = t_end
+            
+            if verbose:
+                print('PID ', os.getpid(), ' : ','Finished computing linear interevent transition matrices in ', t_end)
+
+            
             
     def compute_transition_matrices(self, lamda=None,
                                     verbose=False,
@@ -1433,9 +1592,7 @@ class ContTempNetwork(object):
         if lamda not in self.T.keys():
             if save_intermediate:
                 if force_csr:
-                    # forcing the first matrix to csr, will ensure that 
-                    # all products are done in csr format,
-                    # since CSR @ SparseStochMat t is not implemented
+                    # Force the first matrix to CSR.
                     self.T[lamda] = [self.inter_T[lamda][k_init].tocsr()]
                 else:
                     self.T[lamda] = [self.inter_T[lamda][k_init]]
@@ -1498,79 +1655,293 @@ class ContTempNetwork(object):
             if verbose:
                 print('PID ', os.getpid(), ' : ','Transition matrices already computed for lamda={0}'.format(lamda))      
 
-    def compute_transition_matrices_sliding_window(self, lamda=None,
-                                                verbose=False,
-                                                save_intermediate=True,
-                                                reverse_time=False,
-                                                force_csr=False,
-                                                tol=None,
-                                                window_size=None):
-        """ Compute transition matrices using a sliding window approach.
-            Saves them in a dict of lists `self.T[lamda]` where `self.T[lamda][k]`
-            is the product of interevent transition matrices from t_{k-window_size} to t_k.
+    # def compute_transition_matrices_sliding_window(self, lamda=None,
+    #                                             verbose=False,
+    #                                             save_intermediate=True,
+    #                                             reverse_time=False,
+    #                                             force_csr=False,
+    #                                             tol=None,
+    #                                             window_size=None):
+    #     """ Compute transition matrices using a sliding window approach.
+    #         Saves them in a dict of lists `self.T[lamda]` where `self.T[lamda][k]`
+    #         is the product of interevent transition matrices from t_{k-window_size} to t_k.
         
-            Parameters:
-            - lamda: parameter for interevent matrices.
-            - t_start, t_stop: time range for computation.
-            - verbose: flag for detailed logging.
-            - save_intermediate: whether to save intermediate results.
-            - reverse_time: if True, computes in reverse time.
-            - force_csr: forces computation in CSR format.
-            - tol: tolerance for setting matrix elements to zero.
-            - window_size: size of the sliding window (must be provided).
+    #         Parameters:
+    #         - lamda: parameter for interevent matrices.
+    #         - t_start, t_stop: time range for computation.
+    #         - verbose: flag for detailed logging.
+    #         - save_intermediate: whether to save intermediate results.
+    #         - reverse_time: if True, computes in reverse time.
+    #         - force_csr: forces computation in CSR format.
+    #         - tol: tolerance for setting matrix elements to zero.
+    #         - window_size: size of the sliding window (must be provided).
+    #     """
+
+    #     if not hasattr(self, 'inter_T') or lamda not in self.inter_T.keys():
+    #         raise Exception("Compute inter_T first.")
+
+    #     if not hasattr(self, 'window_T'):
+    #         self.window_T = dict()
+
+    #     if window_size is None or window_size <= 0:
+    #         raise ValueError("window_size must be a positive integer.")
+
+    #     if reverse_time:
+    #         k_init = len(self.inter_T[lamda]) - 1
+    #         k_range = reversed(range(window_size - 1, k_init))
+    #         if verbose:
+    #             print('PID ', os.getpid(), ' : reversed time computation.')
+    #     else:
+    #         k_init = 0
+    #         k_range = range(window_size - 1, len(self.inter_T[lamda]))
+
+    #     if lamda not in self.window_T.keys():
+    #         self.window_T[lamda] = []
+
+    #     if verbose:
+    #         print('PID ', os.getpid(), ' : ', 'Computing sliding window transition matrices')
+
+    #     t0 = time.time()
+
+    #     for k in k_range:
+    #         if verbose and not k % 1000:
+    #             print('PID ', os.getpid(), ' : ', k, ' over ', len(self.inter_T[lamda]))
+    #             print(f'PID {os.getpid()} : {time.time() - t0:.2f}s')
+
+    #         # Compute product over the sliding window
+    #         Tk_window = self.inter_T[lamda][k - window_size + 1]
+    #         for i in range(k - window_size + 2, k + 1):
+    #             if tol is not None:
+    #                 set_to_zeroes(self.inter_T[lamda][i], tol)
+    #                 inplace_csr_row_normalize(self.inter_T[lamda][i])
+    #             Tk_window = Tk_window @ self.inter_T[lamda][i]
+
+    #         if tol is not None:
+    #             set_to_zeroes(Tk_window, tol)
+    #             inplace_csr_row_normalize(Tk_window)
+
+    #         if save_intermediate:
+    #             self.window_T[lamda].append(Tk_window)
+
+    #     t_end = time.time() - t0
+
+    #     if verbose:
+    #         print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
+
+    # def compute_transition_matrices_sliding_timewindow(self, lamda=None,
+    #                                             verbose=False,
+    #                                             save_intermediate=True,
+    #                                             reverse_time=False,
+    #                                             force_csr=False,
+    #                                             tol=None,
+    #                                             window_timelength=None):
+    #     """ Compute transition matrices using a sliding window approach.
+    #         Saves them in a dict of lists `self.T[lamda]` where `self.T[lamda][k]`
+    #         is the product of interevent transition matrices from t_{k-window_timelength} to t_k.
+        
+    #         Parameters:
+    #         - lamda: parameter for interevent matrices.
+    #         - t_start, t_stop: time range for computation.
+    #         - verbose: flag for detailed logging.
+    #         - save_intermediate: whether to save intermediate results.
+    #         - reverse_time: if True, computes in reverse time.
+    #         - force_csr: forces computation in CSR format.
+    #         - tol: tolerance for setting matrix elements to zero.
+    #         - window_timelength: size of the sliding window (must be provided).
+    #     """
+
+    #     if not hasattr(self, 'inter_T') or lamda not in self.inter_T.keys():
+    #         raise Exception("Compute inter_T first.")
+
+    #     if not hasattr(self, 'window_T'):
+    #         self.window_T = dict()
+
+    #     if window_timelength is None or window_timelength <= 0:
+    #         raise ValueError("window_timelength must be a positive integer.")
+
+    #     if reverse_time:
+    #         raise Exception("Not implemented yet.")
+    #     else:
+    #         considered_times = self.times[self.times < self.times[-1] - window_timelength]
+    #         k_range = range(len(considered_times))
+
+    #     if lamda not in self.window_T.keys():
+    #         self.window_T[lamda] = []
+
+    #     if verbose:
+    #         print('PID ', os.getpid(), ' : ', 'Computing sliding window transition matrices')
+
+    #     t0 = time.time()
+
+    #     for k in k_range:
+    #         if verbose and not k % 1000:
+    #             print('PID ', os.getpid(), ' : ', k, ' over ', len(considered_times))
+    #             print(f'PID {os.getpid()} : {time.time() - t0:.2f}s')
+
+    #         # Compute product over the sliding window
+    #         Tk_window = self.inter_T[lamda][k]
+    #         t_rightboundary,k_rightboundary = self._get_closest_time(self.times[k] + window_timelength)
+    #         for i in range(k+1, k_rightboundary + 1):
+    #             if tol is not None:
+    #                 set_to_zeroes(self.inter_T[lamda][i], tol)
+    #                 inplace_csr_row_normalize(self.inter_T[lamda][i])
+    #             Tk_window = Tk_window @ self.inter_T[lamda][i]
+
+    #         if tol is not None:
+    #             set_to_zeroes(Tk_window, tol)
+    #             inplace_csr_row_normalize(Tk_window)
+
+    #         if save_intermediate:
+    #             self.window_T[lamda].append(Tk_window)
+
+    #     t_end = time.time() - t0
+
+    #     if verbose:
+    #         print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
+
+    def compute_transition_matrices_sliding_timewindow(self, lamda=None,
+                                                   verbose=False,
+                                                   save_intermediate=True,
+                                                   reverse_time=False,
+                                                   force_csr=False,
+                                                   tol=None,
+                                                   window_timelength=None,
+                                                   on_window_matrix=None,
+                                                   k_samples=None,
+                                                   sample_fraction=None,
+                                                   num_samples=None,
+                                                   sample_by_time=True):
+        """Compute transition matrices using a sliding window approach.
+
+        If `save_intermediate=True`, saves matrices in `self.window_T[lamda]`.
+        If `on_window_matrix` is provided, calls `on_window_matrix(k, Tk_window)`
+        for each window matrix (so you can compute entropy on the fly).
+
+        Sampling behavior:
+        - If `k_samples` is provided, iterate only those k indices.
+        - Else if `num_samples` or `sample_fraction` is provided, sample k indices as uniformly as possible; if `sample_by_time=True`, sample uniformly in time, otherwise uniformly in index.
+        - The function returns the array of k indices actually computed (`k_used`). If no sampling was requested, return `None`.
         """
 
-        if not hasattr(self, 'inter_T') or lamda not in self.inter_T.keys():
-            raise Exception("Compute inter_T first.")
-
-        if not hasattr(self, 'window_T'):
-            self.window_T = dict()
-
-        if window_size is None or window_size <= 0:
-            raise ValueError("window_size must be a positive integer.")
+        if not hasattr(self, 'inter_T') or (lamda not in self.inter_T.keys()):
+            if  not hasattr(self, 'inter_T_lin') or (lamda not in self.inter_T_lin.keys()):
+                raise Exception("Compute inter_T or inter_T_lin first.")
+            else:
+                using_lin_inter_T = True
+        else:
+            using_lin_inter_T = False
+        
+        if window_timelength is None or window_timelength <= 0:
+            raise ValueError("window_timelength must be a positive number.")
 
         if reverse_time:
-            k_init = len(self.inter_T[lamda]) - 1
-            k_range = reversed(range(window_size - 1, k_init))
-            if verbose:
-                print('PID ', os.getpid(), ' : reversed time computation.')
+            raise Exception("Not implemented yet.")
         else:
-            k_init = 0
-            k_range = range(window_size - 1, len(self.inter_T[lamda]))
+            considered_times = self.times[self.times < self.times[-1] - window_timelength]
+            M = len(considered_times)
 
-        if lamda not in self.window_T.keys():
-            self.window_T[lamda] = []
+            # Determine which k indices to compute
+            k_used = None
+            if k_samples is not None:
+                k_used = np.asarray(list(k_samples), dtype=int)
+            elif (num_samples is not None) or (sample_fraction is not None):
+                if num_samples is None:
+                    # sample_fraction is a proportion in (0,1]
+                    sf = float(sample_fraction)
+                    if sf <= 0:
+                        raise ValueError("sample_fraction must be > 0")
+                    if sf > 1:
+                        sf = 1.0
+                    num_samples = int(np.ceil(sf * M))
+                else:
+                    num_samples = int(num_samples)
+
+                if num_samples <= 0:
+                    raise ValueError("num_samples must be > 0")
+                if num_samples > M:
+                    num_samples = M
+
+                if sample_by_time:
+                    # Uniform in time over [times[0], times[-1]-window_timelength]
+                    t0_s = float(self.times[0])
+                    tmax_s = float(self.times[-1] - window_timelength)
+                    t_targets = np.linspace(t0_s, tmax_s, num_samples)
+                    # Map target times to closest k within considered_times (monotone times)
+                    k_used = np.searchsorted(considered_times, t_targets, side='left')
+                    k_used = np.clip(k_used, 0, M - 1)
+                else:
+                    # Uniform in index
+                    k_used = np.round(np.linspace(0, M - 1, num_samples)).astype(int)
+
+                k_used = np.unique(k_used)
+
+            # Iterator over ks
+            if k_used is None:
+                k_iter = range(M)
+            else:
+                k_iter = k_used
+
+        # Only allocate storage if requested
+        if save_intermediate:
+            if not hasattr(self, 'window_T'):
+                self.window_T = dict()
+            if lamda not in self.window_T:
+                self.window_T[lamda] = []
 
         if verbose:
             print('PID ', os.getpid(), ' : ', 'Computing sliding window transition matrices')
 
         t0 = time.time()
 
-        for k in k_range:
+        for k in k_iter:
             if verbose and not k % 1000:
-                print('PID ', os.getpid(), ' : ', k, ' over ', len(self.inter_T[lamda]))
+                print('PID ', os.getpid(), ' : ', k, ' over ', M)
                 print(f'PID {os.getpid()} : {time.time() - t0:.2f}s')
 
-            # Compute product over the sliding window
-            Tk_window = self.inter_T[lamda][k - window_size + 1]
-            for i in range(k - window_size + 2, k + 1):
+            # Start window product at k
+            if using_lin_inter_T == False:
+                Tk_window = self.inter_T[lamda][k]
+            else:
+                Tk_window = self.inter_T_lin[lamda][10][k] #10 indicates t_s
+            if force_csr and not isspmatrix_csr(Tk_window):
+                Tk_window = Tk_window.tocsr()
+
+            # Find right boundary index for the time window
+            t_rightboundary, k_rightboundary = self._get_closest_time(self.times[k] + window_timelength)
+
+            # Multiply inter-event matrices up to boundary
+            for i in range(k + 1, k_rightboundary + 1):
+                if using_lin_inter_T == False:
+                    Ti = self.inter_T[lamda][i]
+                else:
+                    Ti = self.inter_T_lin[lamda][10][i] #10 indicates t_s
+                if force_csr and not isspmatrix_csr(Ti):
+                    Ti = Ti.tocsr()
+
                 if tol is not None:
-                    set_to_zeroes(self.inter_T[lamda][i], tol)
-                    inplace_csr_row_normalize(self.inter_T[lamda][i])
-                Tk_window = Tk_window @ self.inter_T[lamda][i]
+                    set_to_zeroes(Ti, tol)
+                    inplace_csr_row_normalize(Ti)
+
+                Tk_window = Tk_window @ Ti
+
+            if force_csr and not isspmatrix_csr(Tk_window):
+                Tk_window = Tk_window.tocsr()
 
             if tol is not None:
                 set_to_zeroes(Tk_window, tol)
                 inplace_csr_row_normalize(Tk_window)
 
+            # <<< NEW: callback hook >>>
+            if on_window_matrix is not None:
+                on_window_matrix(k, Tk_window)
+
+            # Optional storage (old behavior)
             if save_intermediate:
                 self.window_T[lamda].append(Tk_window)
 
-        t_end = time.time() - t0
-
         if verbose:
-            print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
-
+            print('PID ', os.getpid(), ' : ', f'finished in {time.time() - t0:.2f}s')
+        return k_used
 
     def compute_entropy(self, lamda=None, t_start=None, t_stop=None,
                                     verbose=False,
@@ -1614,17 +1985,11 @@ class ContTempNetwork(object):
             This decouples the dynamic scale from the length of event which
             is useful for temporal networks with instantaneous events.
             The default is False.
-        use_sparse_stoch : bool, optional
-            Whether to use custom sparse stochastic matrix format to save the
-            inter transition matrices. Especially useful for large networks as 
-            the matrix exponential is then computed on each connected component 
-            separately (more memory efficient). The default is False.
         dense_expm : bool, optional
             Whether to use the dense version of the matrix exponential algorithm
             at each time steps. Recommended for not too large networks. 
             The inter trans. matrices are still saved as sparse scipy matrices
-            as they usually have many zero values. The default is True. Has no
-            effect is use_sparse_stoch is True.
+            as they usually have many zero values. The default is True.
 
         Returns
         -------
@@ -1659,9 +2024,6 @@ class ContTempNetwork(object):
         if lamda not in self.S.keys():
             #if save_intermediate:
             if force_csr:
-                # forcing the first matrix to csr, will ensure that 
-                # all products are done in csr format,
-                # since CSR @ SparseStochMat t is not implemented
                 p = p0 @ self.T[lamda][k_init].tocsr()
                 T = self.T[lamda][k_init].tocsr()
                 logTdata = np.log(np.where(T.data > 0, T.data, 1))
@@ -1717,412 +2079,96 @@ class ContTempNetwork(object):
             if verbose:
                 print('PID ', os.getpid(), ' : ','Entropy already computed for lamda={0}'.format(lamda)) 
 
-    def compute_vonNeumann_entropy(self, lamda=None, t_start=None, t_stop=None,
-                                    verbose=False,
-                                    # save_intermediate=True,
-                                    reverse_time=False,
-                                    force_csr=True,
-                                    time_domain=None):
-        """
-        
-        Computes interevent transition matrices as T_k(lamda) = expm(-tau_k*lamda*L_k).
-        
-        The transition matrix T_k is saved in `self.inter_T[lamda][k]`, where 
-        self.inter_T is a dictionary with lamda as keys and lists of transition
-        matrices as values.
-        
-        will compute from self.times[self._k_start_laplacians] until 
-        self.times[self._k_stop_laplacians-1]
-        
-        the transition matrix at step k, is the probability transition matrix
-        between times[k] and times[k+1]
-        
-        Parameters
-        ----------
-        lamda : float, optional
-            Random walk rate, dynamical resolution parameter. The default (None)
-            is 1 over the median inter event time.
-        t_start : float or int, optional
-            Starting time, passed to `compute_laplacian_matrices` if the 
-            Laplacians have not yet been computed.
-            Otherwise is not used.
-            The computation starts at self.times[self._k_start_laplacians].
-            The default is None, i.e. starts at the beginning of times.
-        t_stop : float or int, optional
-            Same than `t_start` but for the ending time of computations.
-            Computations stop at self.times[self._k_stop_laplacians-1].
-            Default is end of times.
-        verbose : bool, optional
-            The default is False.
-        fix_tau_k : bool, optional
-            If true, all interevent times (tau_k) in the formula above are set to 1. 
-            This decouples the dynamic scale from the length of event which
-            is useful for temporal networks with instantaneous events.
-            The default is False.
-        use_sparse_stoch : bool, optional
-            Whether to use custom sparse stochastic matrix format to save the
-            inter transition matrices. Especially useful for large networks as 
-            the matrix exponential is then computed on each connected component 
-            separately (more memory efficient). The default is False.
-        dense_expm : bool, optional
-            Whether to use the dense version of the matrix exponential algorithm
-            at each time steps. Recommended for not too large networks. 
-            The inter trans. matrices are still saved as sparse scipy matrices
-            as they usually have many zero values. The default is True. Has no
-            effect is use_sparse_stoch is True.
-
-        Returns
-        -------
-        None.
-
-        """
-        
-        if not hasattr(self, 'laplacians'):
-            self.compute_laplacian_matrices(t_start=t_start, t_stop=t_stop,
-                                            verbose=verbose)
-        if not hasattr(self, 'inter_T'):
-            self.compute_inter_transition_matrices()
-
-        if not hasattr(self, 'T'):
-            self.compute_transition_matrices()   
+     
     
-        if not hasattr(self, 'vNS'):
-            self.vNS = dict()
-
-        
-        if time_domain is None:
-            time_domain = self.times()
-        if reverse_time:
-            k_init = len(time_domain)-1
-            k_range = reversed(range(0, k_init))
-            if verbose:
-                print('PID ', os.getpid(), ' : reversed time computation.')
-        else:
-            k_init = 0
-            k_range = range(1,len(time_domain))
+    def compute_lin_transition_matrices(self, lamda=None, t_start=None, t_stop=None,
+                                    verbose=False, t_s=10,
+                                    save_intermediate=True,
+                                    reverse_time=False):
+        """ compute transition matrices and saves them in a dict of lists `self.T_lin[lamda][t_s]` 
+            where `self.T_lin[lamda][t_s][k]` is the product of all interevent transition 
+            matrices from t_0 to t_k computed with lamda and t_s.
+        """
             
+        if not hasattr(self, 'inter_T_lin') \
+                or lamda not in self.inter_T_lin.keys() \
+                or t_s not in self.inter_T_lin[lamda].keys():
+            raise Exception("Compute inter_T_lin first.")
+            
+        if not hasattr(self, 'T_lin'):
+            self.T_lin = dict()
+            
+        compute = True
         
-        if lamda not in self.vNS.keys():
-            if force_csr:
-                # forcing the first matrix to csr, will ensure that 
-                # all products are done in csr format,
-                # since CSR @ SparseStochMat t is not implemented
-                T = self.T[lamda][k_init].tocsr()
-                T = T.toarray()
-                rho = T/np.trace(T)
-                rhologrho = rho @ d_logm(rho)
-                self.vNS[lamda] = [- 1/np.log(self.num_nodes) * np.trace(rhologrho)]
-                del T
-                del rho
-                del rhologrho
+        if lamda in self.T_lin.keys():
+            if t_s in self.T_lin[lamda].keys():
+                compute = False
+                if verbose:
+                    print('PID ', os.getpid(), ' : ','Transition matrices already computed ' +\
+                          'for lamda={0}, t_s={1}'.format(lamda,t_s))            
+            
+        if compute:
+            
+            if reverse_time:
+                k_init = len(self.inter_T_lin[lamda][t_s])-1
+                k_range = reversed(range(0, k_init))
+                if verbose:
+                    print('PID ', os.getpid(), ' : reversed time computation.')
             else:
-                raise Exception
-         
+                k_init = 0
+                k_range = range(1,len(self.inter_T_lin[lamda][t_s]))
+            
+            
+            # initial conditions
+            if lamda not in self.T_lin.keys():
+                self.T_lin[lamda] = dict()
+                if save_intermediate:
+                    self.T_lin[lamda][t_s] = [self.inter_T_lin[lamda][t_s][k_init]]
+                else:
+                    self.T_lin[lamda][t_s] = self.inter_T_lin[lamda][t_s][k_init]
+        
+            if t_s not in self.T_lin[lamda].keys():
+                if save_intermediate:
+                    self.T_lin[lamda][t_s] = [self.inter_T_lin[lamda][t_s][k_init]]
+                else:
+                    self.T_lin[lamda][t_s] = self.inter_T_lin[lamda][t_s][k_init]
+        
             if verbose:
-                print('PID ', os.getpid(), ' : ','Computing entropy ')
+                print('PID ', os.getpid(), ' : ','Computing transition matrix for lamda={0}, t_s={1}'.format(lamda,t_s))
                 
             t0 = time.time()
     
             for k in k_range:
                 if verbose and not k%1000:
-                    print('PID ', os.getpid(), ' : ',k, ' over ' , len(self.inter_T[lamda]))
+                    print('PID ', os.getpid(), ' : ',k, ' over ' , len(self.inter_T_lin[lamda][t_s]))
                     print(f'PID {os.getpid()} : {time.time()-t0:.2f}s')
-                    
-                T = self.T[lamda][k].tocsr()
-                T = T.toarray()
-                rho = T/np.trace(T)
-                rhologrho = rho @ d_logm(rho)
-                self.vNS[lamda].append(- 1/np.log(self.num_nodes) * np.trace(rhologrho))
-                del T
-                del rho
-                del rhologrho
-            t_end = time.time()-t0
-              
-            
-            self._compute_times['von Neumman entropy_{0}_rev{1}'.format(lamda,reverse_time)] = t_end
-            
-            if verbose:
-                print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
-        else:
-            if verbose:
-                print('PID ', os.getpid(), ' : ','Entropy already computed for lamda={0}'.format(lamda)) 
-
-    def  compute_simple_vonNeumann_entropy(self, lamda=None, t_start=None, t_stop=None,
-                                    verbose=False,
-                                    # save_intermediate=True,
-                                    reverse_time=False,
-                                    force_csr=True):
-        """
-        
-        Computes interevent transition matrices as T_k(lamda) = expm(-tau_k*lamda*L_k).
-        
-        The transition matrix T_k is saved in `self.inter_T[lamda][k]`, where 
-        self.inter_T is a dictionary with lamda as keys and lists of transition
-        matrices as values.
-        
-        will compute from self.times[self._k_start_laplacians] until 
-        self.times[self._k_stop_laplacians-1]
-        
-        the transition matrix at step k, is the probability transition matrix
-        between times[k] and times[k+1]
-        
-        Parameters
-        ----------
-        lamda : float, optional
-            Random walk rate, dynamical resolution parameter. The default (None)
-            is 1 over the median inter event time.
-        t_start : float or int, optional
-            Starting time, passed to `compute_laplacian_matrices` if the 
-            Laplacians have not yet been computed.
-            Otherwise is not used.
-            The computation starts at self.times[self._k_start_laplacians].
-            The default is None, i.e. starts at the beginning of times.
-        t_stop : float or int, optional
-            Same than `t_start` but for the ending time of computations.
-            Computations stop at self.times[self._k_stop_laplacians-1].
-            Default is end of times.
-        verbose : bool, optional
-            The default is False.
-        fix_tau_k : bool, optional
-            If true, all interevent times (tau_k) in the formula above are set to 1. 
-            This decouples the dynamic scale from the length of event which
-            is useful for temporal networks with instantaneous events.
-            The default is False.
-        use_sparse_stoch : bool, optional
-            Whether to use custom sparse stochastic matrix format to save the
-            inter transition matrices. Especially useful for large networks as 
-            the matrix exponential is then computed on each connected component 
-            separately (more memory efficient). The default is False.
-        dense_expm : bool, optional
-            Whether to use the dense version of the matrix exponential algorithm
-            at each time steps. Recommended for not too large networks. 
-            The inter trans. matrices are still saved as sparse scipy matrices
-            as they usually have many zero values. The default is True. Has no
-            effect is use_sparse_stoch is True.
-
-        Returns
-        -------
-        None.
-
-        """
-        
-        if not hasattr(self, 'laplacians'):
-            self.compute_laplacian_matrices(t_start=t_start, t_stop=t_stop,
-                                            verbose=verbose)
-        if not hasattr(self, 'inter_T'):
-            self.compute_inter_transition_matrices()
-
-        if not hasattr(self, 'T'):
-            self.compute_transition_matrices()   
-    
-        if not hasattr(self, 'simple_vNS'):
-            self.simple_vNS = dict()
-
-        
-        if reverse_time:
-            k_init = len(self.inter_T[lamda])-1
-            k_range = reversed(range(0, k_init))
-            if verbose:
-                print('PID ', os.getpid(), ' : reversed time computation.')
-        else:
-            k_init = 0
-            k_range = range(1,len(self.inter_T[lamda]))
-            
-        
-        if lamda not in self.simple_vNS.keys():
-            if force_csr:
-                # forcing the first matrix to csr, will ensure that 
-                # all products are done in csr format,
-                # since CSR @ SparseStochMat t is not implemented
-                T = self.T[lamda][k_init].tocsr()
-                rho = T/T.trace()
-                np_rhologrho = rho.data * np.log(rho.data)
-                np_rhologrho[np.isnan(np_rhologrho)] = 0
-                rhologrho = csr_matrix((np_rhologrho, rho.indices, rho.indptr), shape=rho.shape)
-                del np_rhologrho
-                self.simple_vNS[lamda] = [-rhologrho.trace()]
-            else:
-                raise Exception("Use force_csr=True")
-                '''p = p0 @ self.T[lamda][k_init]
-                logT = np.log(self.T[lamda][k_init])
-                TlogT = np.multiply(self.T[lamda][k_init], logT)
-                self.rho[lamda] = [np.sum(p @ TlogT)]'''
-         
-        
-            if verbose:
-                print('PID ', os.getpid(), ' : ','Computing entropy ')
+                if save_intermediate:
+                    self.T_lin[lamda][t_s].append(self.T_lin[lamda][t_s][-1] @ \
+                                      self.inter_T_lin[lamda][t_s][k])
                 
-            t0 = time.time()
-    
-            for k in k_range:
-                if verbose and not k%1000:
-                    print('PID ', os.getpid(), ' : ',k, ' over ' , len(self.inter_T[lamda]))
-                    print(f'PID {os.getpid()} : {time.time()-t0:.2f}s')
-                    
-                T = self.T[lamda][k].tocsr()
-                rho = T/T.trace()
-                np_rhologrho = rho.data * np.log(rho.data)
-                np_rhologrho[np.isnan(np_rhologrho)] = 0
-                rhologrho = csr_matrix((np_rhologrho, rho.indices, rho.indptr), shape=rho.shape)
-                del np_rhologrho
-                self.simple_vNS[lamda].append(-rhologrho.trace())
-
+                    #normalize T to correct precision errors
+                    inplace_csr_row_normalize(self.T_lin[lamda][t_s][-1])
+                else:
+                    self.T_lin[lamda][t_s] = self.T_lin[lamda][t_s] @ \
+                                      self.inter_T_lin[lamda][t_s][k]
                 
+                    #normalize T to correct precision errors
+                    inplace_csr_row_normalize(self.T_lin[lamda][t_s])
+                    
             t_end = time.time()-t0
             
-            self._compute_times['von Neumman entropy_{0}_rev{1}'.format(lamda,reverse_time)] = t_end
+            self._compute_times['trans_matrix_lin_{0}_{1}_rev{2}'.format(lamda,
+                                t_s, reverse_time)] = t_end
             
             if verbose:
-                print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
+                print('PID ', os.getpid(), ' : ','finished in ', t_end)
         else:
             if verbose:
-                print('PID ', os.getpid(), ' : ','Entropy already computed for lamda={0}'.format(lamda))
-
-    def compute_entropy2(self, lamda=None, t_start=None, t_stop=None,
-                                    verbose=False,
-                                    # save_intermediate=True,
-                                    reverse_time=False,
-                                    force_csr=True):
-        """
-        
-        Computes interevent transition matrices as T_k(lamda) = expm(-tau_k*lamda*L_k).
-        
-        The transition matrix T_k is saved in `self.inter_T[lamda][k]`, where 
-        self.inter_T is a dictionary with lamda as keys and lists of transition
-        matrices as values.
-        
-        will compute from self.times[self._k_start_laplacians] until 
-        self.times[self._k_stop_laplacians-1]
-        
-        the transition matrix at step k, is the probability transition matrix
-        between times[k] and times[k+1]
-        
-        Parameters
-        ----------
-        lamda : float, optional
-            Random walk rate, dynamical resolution parameter. The default (None)
-            is 1 over the median inter event time.
-        t_start : float or int, optional
-            Starting time, passed to `compute_laplacian_matrices` if the 
-            Laplacians have not yet been computed.
-            Otherwise is not used.
-            The computation starts at self.times[self._k_start_laplacians].
-            The default is None, i.e. starts at the beginning of times.
-        t_stop : float or int, optional
-            Same than `t_start` but for the ending time of computations.
-            Computations stop at self.times[self._k_stop_laplacians-1].
-            Default is end of times.
-        verbose : bool, optional
-            The default is False.
-        fix_tau_k : bool, optional
-            If true, all interevent times (tau_k) in the formula above are set to 1. 
-            This decouples the dynamic scale from the length of event which
-            is useful for temporal networks with instantaneous events.
-            The default is False.
-        use_sparse_stoch : bool, optional
-            Whether to use custom sparse stochastic matrix format to save the
-            inter transition matrices. Especially useful for large networks as 
-            the matrix exponential is then computed on each connected component 
-            separately (more memory efficient). The default is False.
-        dense_expm : bool, optional
-            Whether to use the dense version of the matrix exponential algorithm
-            at each time steps. Recommended for not too large networks. 
-            The inter trans. matrices are still saved as sparse scipy matrices
-            as they usually have many zero values. The default is True. Has no
-            effect is use_sparse_stoch is True.
-
-        Returns
-        -------
-        None.
-
-        """
-        
-        if not hasattr(self, 'laplacians'):
-            self.compute_laplacian_matrices(t_start=t_start, t_stop=t_stop,
-                                            verbose=verbose)
-        if not hasattr(self, 'inter_T'):
-            self.compute_inter_transition_matrices()
-
-        if not hasattr(self, 'T'):
-            self.compute_transition_matrices()   
-    
-        if not hasattr(self, 'S2'):
-            self.S2 = dict()
-
-        
-        if reverse_time:
-            k_init = len(self.inter_T[lamda])-1
-            k_range = reversed(range(0, k_init))
-            if verbose:
-                print('PID ', os.getpid(), ' : reversed time computation.')
-        else:
-            k_init = 0
-            k_range = range(1,len(self.inter_T[lamda]))
-            
-        p0 = 1/self.num_nodes*np.ones(self.num_nodes)
-        
-        if lamda not in self.S2.keys():
-            #if save_intermediate:
-            if force_csr:
-                # forcing the first matrix to csr, will ensure that 
-                # all products are done in csr format,
-                # since CSR @ SparseStochMat t is not implemented
-                p = p0 @ self.T[lamda][k_init].tocsr()
-                diagp = csr_matrix(np.diag(p))
-                T = self.T[lamda][k_init].tocsr()
-                Q = -lamda*self.laplacians[k_init]
-                diagpQ= diagp @ Q
-                array_diagpQ = np.asarray(diagpQ.toarray())
-                
-                entropy2 = 0
-                for i in range(array_diagpQ.shape[0]):
-                    for j in range(diagpQ.shape[1]):
-                        if np.isfinite(np.log(array_diagpQ[i][j]/array_diagpQ[j][i])):
-                            entropy2 += array_diagpQ[i][j] * np.log(array_diagpQ[i][j]/array_diagpQ[j][i])
-                self.S2[lamda] = [entropy2]
-            else:
-                raise Exception("Use force_csr=True")
-  
-            if verbose:
-                print('PID ', os.getpid(), ' : ','Computing entropy2 ')
-                
-            t0 = time.time()
-    
-            for k in k_range:
-                if verbose and not k%1000:
-                    print('PID ', os.getpid(), ' : ',k, ' over ' , len(self.inter_T[lamda]))
-                    print(f'PID {os.getpid()} : {time.time()-t0:.2f}s')
-                    
-                p = p0 @ self.T[lamda][k].tocsr()
-                diagp = csr_matrix(np.diag(p))
-                T = self.T[lamda][k].tocsr()
-                Q = -lamda*self.laplacians[k]
-                diagpQ= diagp @ Q
-                array_diagpQ = np.asarray(diagpQ.toarray())
-                
-                entropy2 = 0
-                for i in range(array_diagpQ.shape[0]):
-                    for j in range(diagpQ.shape[1]):
-                        if np.isfinite(np.log(array_diagpQ[i][j]/array_diagpQ[j][i])):
-                            entropy2 += array_diagpQ[i][j] * np.log(array_diagpQ[i][j]/array_diagpQ[j][i])
-                self.S2[lamda].append(entropy2)
-
-                
-            t_end = time.time()-t0
-            
-            self._compute_times['entropy_{0}_rev{1}'.format(lamda,reverse_time)] = t_end
-            
-            if verbose:
-                print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
-        else:
-            if verbose:
-                print('PID ', os.getpid(), ' : ','Entropy2 already computed for lamda={0}'.format(lamda)) 
-    
-                                   
+                print('PID ', os.getpid(), ' : ','Transition matrices already computed for lamda={0}'.format(lamda))      
+                                
     def _compute_stationary_transition(self, t_start=None, 
                                                t_stop=None, 
-                                               verbose=False,
-                                               use_sparse_stoch=True):
+                                               verbose=False):
         
         if not hasattr(self, 'laplacians'):
             self.compute_laplacian_matrices(t_start=t_start,
@@ -2144,13 +2190,8 @@ class ContTempNetwork(object):
                 print('PID ', os.getpid(), ' : ',k, ' over ' , len(self.laplacians))
                 print(f'PID {os.getpid()} : {time.time()-t0:.2f}s')
                 
-            if use_sparse_stoch:
-                self._stationary_trans.append(\
-                  sparse_stationary_trans(I - self.laplacians[k]))
-            
-            else:
-                self._stationary_trans.append(\
-                      compute_stationary_transition(I - self.laplacians[k]))
+            self._stationary_trans.append(\
+                  compute_stationary_transition(I - self.laplacians[k]))
    
                 
         t_end = time.time()-t0
@@ -2294,7 +2335,68 @@ class ContTempNetwork(object):
         else:
             print('PID ', os.getpid(), ' : ', 'delta_inter_T_lin has not been computed')
             
-  
+
+                    
+        
+def lin_approx_trans_matrix(T, t, Pi=None,t_s=10):
+    r""" linear approximation of a continuous time transition matrix :math:`T(t) = e^{-tL}` based on 
+        an interpolation between :math:`I` and :math:`T` and 
+        a second interpolation between :math:`T` and :math:`\Pi`, the transition 
+        matrix at stationarity.
+        
+        For each connected component of the graph, :math:`T(t)` is approximated as
+        
+        .. math::
+            \tilde{T}(t) & = & (1-t) I + tT \text{ for } 0\leq t \leq 1 \\
+            \tilde{T}(t) & = & \frac{1}{1-t_s}[T(t-t_s) + \Pi(1-t)] \text{ for } 1 < t \leq t_s \\
+            \tilde{T}(t) & = & \Pi \text{ for } t > t_s
+            
+        where  :math:`t_s` is the mixing time of the random walk (default is `t_s=10`).
+            
+            
+        Parameters:
+        -----------
+        
+        T : scipy.sparse csr matrix
+            Transition matrix of the discrete time random walk
+        t : float
+            Time, greater or equal to zero.
+        Pi : scipy.sparse matrix
+            Transition matrix of the discrete time random walk at stationarity.
+            If None, it will be computed from T.
+        t_s : float
+            Stationarity time at which the interpolation reaches Pi.
+            
+        Returns:
+        --------
+        
+        Tapprox : scipy.sparse.csr matrix
+            Linear approximation of expmL at time t.
+            
+    """
+    assert isspmatrix_csr(T)
+    
+    num_nodes = T.shape[0]
+    I = eye(num_nodes,
+                dtype=np.float64, format='csr')
+    
+    if t < 0:
+        raise ValueError('t must be >= 0')
+        
+    elif t <= 1:
+        return (1-t)*I + t*T.tocsr()
+    else:
+        
+        if Pi is None:
+            Pi = compute_stationary_transition(T)
+    
+        if t < t_s:
+            
+            return (1/(1-t_s))*(T*(t-t_s)+Pi*(1-t))
+        else:
+            return Pi
+            
+    
 def compute_stationary_transition(T):
     """ compute the transition matrix at stationarity for matrix `T`
 
@@ -2443,6 +2545,8 @@ def compute_subspace_expm(A, n_comp=None, comp_labels=None, verbose=False,
     
     return expmA
     
+    
+
             
 def csc_row_normalize(X):
     """ row normalize scipy sparse csc matrices.
@@ -2505,7 +2609,9 @@ def remove_nnz_rowcol(L):
     
     return L[nonzerosum_rowcols][:,nonzerosum_rowcols], nonzero_indices, L.shape[0]
 
-      
+        
+
+        
     
 def numpy_rebuild_nnz_rowcol(T_data,
                             T_indices,
@@ -2573,6 +2679,30 @@ def numpy_rebuild_nnz_rowcol(T_data,
 
     return (data, indices, indptr, n_rows)    
 
+        
+        
+        
+def _csr_from_legacy_transition_dict(mat_dict):
+    """Rebuild a legacy serialized transition matrix as CSR."""
+
+    size = mat_dict['size']
+    nz_rowcols = np.asarray(mat_dict['nz_rowcols'], dtype=np.int32)
+    zero_mask = np.ones(size, dtype=bool)
+    zero_mask[nz_rowcols] = False
+    zero_indices = np.flatnonzero(zero_mask)
+
+    data, indices, indptr, size = numpy_rebuild_nnz_rowcol(
+        np.asarray(mat_dict['data'], dtype=np.float64),
+        np.asarray(mat_dict['indices'], dtype=np.int32),
+        np.asarray(mat_dict['indptr'], dtype=np.int32),
+        zero_indices,
+    )
+
+    diag_val = mat_dict.get('diag_val', 1.0)
+    if zero_indices.size and diag_val != 1.0:
+        data[indptr[zero_indices]] = diag_val
+
+    return csr_matrix((data, indices, indptr), shape=(size, size))
 
     
 def set_to_ones(Tcsr, tol=1e-8):
@@ -2590,9 +2720,7 @@ def set_to_zeroes(Tcsr, tol=1e-8, relative=True, use_absolute_value=False):
     """
         
     if tol is not None:
-        if isinstance(Tcsr, sparse_stoch_mat):
-            Tcsr.set_to_zeroes(tol, relative=relative)
-        elif isinstance(Tcsr, (csr_matrix,csc_matrix)):
+        if isinstance(Tcsr, (csr_matrix,csc_matrix)):
             if Tcsr.data.size > 0:
                 if relative:
                     # tol = tol*np.abs(Tcsr.data).max()
@@ -2606,7 +2734,7 @@ def set_to_zeroes(Tcsr, tol=1e-8, relative=True, use_absolute_value=False):
                     
                 Tcsr.eliminate_zeros()
         else:
-            raise TypeError("Tcsr must be csc,csr or sparse_stoch_mat")
+            raise TypeError("Tcsr must be csc or csr")
     
 
 class StaticTempNetwork(object):
@@ -2847,7 +2975,6 @@ class StaticTempNetwork(object):
     def compute_inter_transition_matrices(self, lamda=None, t_start=None, t_stop=None,
                                     verbose=False,
                                     fix_tau_k=False,
-                                    use_sparse_stoch=False,
                                     dense_expm=True):
         """
         
@@ -2885,17 +3012,11 @@ class StaticTempNetwork(object):
             This decouples the dynamic scale from the length of event which
             is useful for temporal networks with instantaneous events.
             The default is False.
-        use_sparse_stoch : bool, optional
-            Whether to use custom sparse stochastic matrix format to save the
-            inter transition matrices. Especially useful for large networks as 
-            the matrix exponential is then computed on each connected component 
-            separately (more memory efficient). The default is False.
         dense_expm : bool, optional
             Whether to use the dense version of the matrix exponential algorithm
             at each time steps. Recommended for not too large networks. 
             The inter trans. matrices are still saved as sparse scipy matrices
-            as they usually have many zero values. The default is True. Has no
-            effect is use_sparse_stoch is True.
+            as they usually have many zero values. The default is True.
 
         Returns
         -------
@@ -2921,8 +3042,8 @@ class StaticTempNetwork(object):
             self.inter_T[lamda] = []
                 
             t0 = time.time()
-            tk=self.times[0]
-            for k in range(1,len(self.times)):
+            tk=0
+            for k in range(0,len(self.times)):
                 if verbose and not k%1000:
                     print('PID ', os.getpid(), ' : ',k, ' over ' ,
                           self._k_stop_laplacians-1-self._k_start_laplacians)
@@ -2933,36 +3054,26 @@ class StaticTempNetwork(object):
                 else:
                     tau_k = self.times[k] - tk
                 
-                if use_sparse_stoch:
-                    # self.inter_T[lamda].append(sparse_lapl_expm(self.laplacians,
-                    #                                                    tau_k*lamda,
-                    #                                                    dense_expm=dense_expm))
-                    raise Exception("Shouldn't use use_sparse_stoch=True")
+                if self.laplacians.getnnz() == 0:
+                    # expm of zero = identity
+                    print('special case: network is empty')
+                    self.inter_T[lamda].append(eye(self.num_nodes,format='csr'))
                 else:
-                    if self.laplacians.getnnz() == 0:
-                        # expm of zero = identity
-                        print('special case: network is empty')
-                        self.inter_T[lamda].append(eye(self.num_nodes,format='csr'))
+                    if dense_expm:
+                        #self.inter_T[lamda].append(csr_matrix(expm(-tau_k*lamda*self.laplacians.toarray())))
+                        raise Exception("Shouldn't use dense_expm=True")
                     else:
-                        if dense_expm:
-                            #self.inter_T[lamda].append(csr_matrix(expm(-tau_k*lamda*self.laplacians.toarray())))
-                            raise Exception("Shouldn't use dense_expm=True")
-                        else:
-                            self.inter_T[lamda].append(expm(-tau_k*lamda*self.laplacians).tocsr())
+                        self.inter_T[lamda].append(expm(-tau_k*lamda*self.laplacians).tocsr())
                     tk = self.times[k]
         
             if len(self.inter_T[lamda]) == 0:
                 if verbose:
                     print('PID ', os.getpid(), ' no events, trans. matrix = identity')
                 # is there was no event, the transition is identity
-                if use_sparse_stoch:
-                    #self.inter_T[lamda].append(sparse_stoch_mat.create_diag(size=self.num_nodes))
-                    raise Exception("Shouldn't use use_sparse_stoch=True")
-                else:
-                    print('Special case, inter T = eye')
-                    self.inter_T[lamda].append(eye(self.num_nodes, 
-                                                      dtype=np.float64,
-                                                      format='csr'))
+                print('Special case, inter T = eye')
+                self.inter_T[lamda].append(eye(self.num_nodes, 
+                                                  dtype=np.float64,
+                                                  format='csr'))
                 
             t_end = time.time()-t0
             tk= self.times[k]
@@ -3005,9 +3116,7 @@ class StaticTempNetwork(object):
         if lamda not in self.T.keys():
             if save_intermediate:
                 if force_csr:
-                    # forcing the first matrix to csr, will ensure that 
-                    # all products are done in csr format,
-                    # since CSR @ SparseStochMat t is not implemented
+                    # Force the first matrix to CSR.
                     self.T[lamda] = [self.inter_T[lamda][k_init].tocsr()]
                 else:
                     self.T[lamda] = [self.inter_T[lamda][k_init]]
@@ -3112,17 +3221,11 @@ class StaticTempNetwork(object):
             This decouples the dynamic scale from the length of event which
             is useful for temporal networks with instantaneous events.
             The default is False.
-        use_sparse_stoch : bool, optional
-            Whether to use custom sparse stochastic matrix format to save the
-            inter transition matrices. Especially useful for large networks as 
-            the matrix exponential is then computed on each connected component 
-            separately (more memory efficient). The default is False.
         dense_expm : bool, optional
             Whether to use the dense version of the matrix exponential algorithm
             at each time steps. Recommended for not too large networks. 
             The inter trans. matrices are still saved as sparse scipy matrices
-            as they usually have many zero values. The default is True. Has no
-            effect is use_sparse_stoch is True.
+            as they usually have many zero values. The default is True.
 
         Returns
         -------
@@ -3158,9 +3261,6 @@ class StaticTempNetwork(object):
         if lamda not in self.S.keys():
             #if save_intermediate:
             if force_csr:
-                # forcing the first matrix to csr, will ensure that 
-                # all products are done in csr format,
-                # since CSR @ SparseStochMat t is not implemented
                 p = p0 @ self.T[lamda][k_init].tocsr()
                 T = self.T[lamda][k_init].tocsr()
                 logTdata = np.log(np.where(T.data > 0, T.data, 1))
@@ -3211,684 +3311,4 @@ class StaticTempNetwork(object):
                 print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
         else:
             if verbose:
-                print('PID ', os.getpid(), ' : ','Entropy already computed for lamda={0}'.format(lamda)) 
-
-    def compute_vonNeumann_entropy(self, lamda=None, t_start=None, t_stop=None,
-                                    verbose=False,
-                                    # save_intermediate=True,
-                                    reverse_time=False,
-                                    force_csr=True,
-                                    time_domain=None):
-        """
-        
-        Computes interevent transition matrices as T_k(lamda) = expm(-tau_k*lamda*L_k).
-        
-        The transition matrix T_k is saved in `self.inter_T[lamda][k]`, where 
-        self.inter_T is a dictionary with lamda as keys and lists of transition
-        matrices as values.
-        
-        will compute from self.times[self._k_start_laplacians] until 
-        self.times[self._k_stop_laplacians-1]
-        
-        the transition matrix at step k, is the probability transition matrix
-        between times[k] and times[k+1]
-        
-        Parameters
-        ----------
-        lamda : float, optional
-            Random walk rate, dynamical resolution parameter. The default (None)
-            is 1 over the median inter event time.
-        t_start : float or int, optional
-            Starting time, passed to `compute_laplacian_matrices` if the 
-            Laplacians have not yet been computed.
-            Otherwise is not used.
-            The computation starts at self.times[self._k_start_laplacians].
-            The default is None, i.e. starts at the beginning of times.
-        t_stop : float or int, optional
-            Same than `t_start` but for the ending time of computations.
-            Computations stop at self.times[self._k_stop_laplacians-1].
-            Default is end of times.
-        verbose : bool, optional
-            The default is False.
-        fix_tau_k : bool, optional
-            If true, all interevent times (tau_k) in the formula above are set to 1. 
-            This decouples the dynamic scale from the length of event which
-            is useful for temporal networks with instantaneous events.
-            The default is False.
-        use_sparse_stoch : bool, optional
-            Whether to use custom sparse stochastic matrix format to save the
-            inter transition matrices. Especially useful for large networks as 
-            the matrix exponential is then computed on each connected component 
-            separately (more memory efficient). The default is False.
-        dense_expm : bool, optional
-            Whether to use the dense version of the matrix exponential algorithm
-            at each time steps. Recommended for not too large networks. 
-            The inter trans. matrices are still saved as sparse scipy matrices
-            as they usually have many zero values. The default is True. Has no
-            effect is use_sparse_stoch is True.
-
-        Returns
-        -------
-        None.
-
-        """
-        
-        if not hasattr(self, 'laplacians'):
-            self.compute_laplacian_matrices(t_start=t_start, t_stop=t_stop,
-                                            verbose=verbose)
-        if not hasattr(self, 'inter_T'):
-            self.compute_inter_transition_matrices()
-
-        if not hasattr(self, 'T'):
-            self.compute_transition_matrices()   
-    
-        if not hasattr(self, 'vNS'):
-            self.vNS = dict()
-
-        
-        if time_domain is None:
-            time_domain = self.times()
-        if reverse_time:
-            k_init = len(time_domain)-1
-            k_range = reversed(range(0, k_init))
-            if verbose:
-                print('PID ', os.getpid(), ' : reversed time computation.')
-        else:
-            k_init = 0
-            k_range = range(1,len(time_domain))
-            
-        
-        if lamda not in self.vNS.keys():
-            if force_csr:
-                # forcing the first matrix to csr, will ensure that 
-                # all products are done in csr format,
-                # since CSR @ SparseStochMat t is not implemented
-                T = self.T[lamda][k_init].tocsr()
-                T = T.toarray()
-                rho = T/np.trace(T)
-                rhologrho = rho @ d_logm(rho)
-                self.vNS[lamda] = [- 1/np.log(self.num_nodes) * np.trace(rhologrho)]
-                del T
-                del rho
-                del rhologrho
-            else:
-                raise Exception
-         
-            if verbose:
-                print('PID ', os.getpid(), ' : ','Computing entropy ')
-                
-            t0 = time.time()
-    
-            for k in k_range:
-                if verbose and not k%1000:
-                    print('PID ', os.getpid(), ' : ',k, ' over ' , len(self.inter_T[lamda]))
-                    print(f'PID {os.getpid()} : {time.time()-t0:.2f}s')
-                    
-                T = self.T[lamda][k].tocsr()
-                T = T.toarray()
-                rho = T/np.trace(T)
-                rhologrho = rho @ d_logm(rho)
-                self.vNS[lamda].append(- 1/np.log(self.num_nodes) * np.trace(rhologrho))
-                del T
-                del rho
-                del rhologrho
-            t_end = time.time()-t0
-            
-            
-            if verbose:
-                print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
-        else:
-            if verbose:
-                print('PID ', os.getpid(), ' : ','Entropy already computed for lamda={0}'.format(lamda)) 
-
-    def compute_simple_vonNeumann_entropy(self, lamda=None, t_start=None, t_stop=None,
-                                    verbose=False,
-                                    # save_intermediate=True,
-                                    reverse_time=False,
-                                    force_csr=True,
-                                    time_domain=None):
-        """
-        
-        Computes interevent transition matrices as T_k(lamda) = expm(-tau_k*lamda*L_k).
-        
-        The transition matrix T_k is saved in `self.inter_T[lamda][k]`, where 
-        self.inter_T is a dictionary with lamda as keys and lists of transition
-        matrices as values.
-        
-        will compute from self.times[self._k_start_laplacians] until 
-        self.times[self._k_stop_laplacians-1]
-        
-        the transition matrix at step k, is the probability transition matrix
-        between times[k] and times[k+1]
-        
-        Parameters
-        ----------
-        lamda : float, optional
-            Random walk rate, dynamical resolution parameter. The default (None)
-            is 1 over the median inter event time.
-        t_start : float or int, optional
-            Starting time, passed to `compute_laplacian_matrices` if the 
-            Laplacians have not yet been computed.
-            Otherwise is not used.
-            The computation starts at self.times[self._k_start_laplacians].
-            The default is None, i.e. starts at the beginning of times.
-        t_stop : float or int, optional
-            Same than `t_start` but for the ending time of computations.
-            Computations stop at self.times[self._k_stop_laplacians-1].
-            Default is end of times.
-        verbose : bool, optional
-            The default is False.
-        fix_tau_k : bool, optional
-            If true, all interevent times (tau_k) in the formula above are set to 1. 
-            This decouples the dynamic scale from the length of event which
-            is useful for temporal networks with instantaneous events.
-            The default is False.
-        use_sparse_stoch : bool, optional
-            Whether to use custom sparse stochastic matrix format to save the
-            inter transition matrices. Especially useful for large networks as 
-            the matrix exponential is then computed on each connected component 
-            separately (more memory efficient). The default is False.
-        dense_expm : bool, optional
-            Whether to use the dense version of the matrix exponential algorithm
-            at each time steps. Recommended for not too large networks. 
-            The inter trans. matrices are still saved as sparse scipy matrices
-            as they usually have many zero values. The default is True. Has no
-            effect is use_sparse_stoch is True.
-
-        Returns
-        -------
-        None.
-
-        """
-        
-        if not hasattr(self, 'laplacians'):
-            self.compute_laplacian_matrices(t_start=t_start, t_stop=t_stop,
-                                            verbose=verbose)
-        if not hasattr(self, 'inter_T'):
-            self.compute_inter_transition_matrices()
-
-        if not hasattr(self, 'T'):
-            self.compute_transition_matrices()   
-    
-        if not hasattr(self, 'simple_vNS'):
-            self.simple_vNS = dict()
-
-        
-        if time_domain is None:
-            time_domain = self.times()
-        if reverse_time:
-            k_init = len(time_domain)-1
-            k_range = reversed(range(0, k_init))
-            if verbose:
-                print('PID ', os.getpid(), ' : reversed time computation.')
-        else:
-            k_init = 0
-            k_range = range(1,len(time_domain))
-            
-        
-        if lamda not in self.simple_vNS.keys():
-            if force_csr:
-                # forcing the first matrix to csr, will ensure that 
-                # all products are done in csr format,
-                # since CSR @ SparseStochMat t is not implemented
-                T = self.T[lamda][k_init].tocsr()
-                T = T.toarray()
-                rho = T/np.trace(T)
-                # np_rho = rho.toarray()
-                # np_logrho = np.log(np.where(np_rho != 0, np_rho, 1))
-                # np_rhologrho = np_rho  * np_logrho
-                # # np_rhologrho[np.isnan(np_rhologrho)] = 0
-                # rhologrho = csr_matrix(np_rhologrho)
-                # del np_rhologrho
-                # del np_rho
-                # del np_logrho
-                # self.simple_vNS[lamda] = [-rhologrho.trace()]
-                
-                L = self.laplacians.toarray()
-                self.simple_vNS[lamda] = [1/np.log(self.num_nodes) * (np.trace(self.times[k_init] * rho @ L) + np.log(np.trace(T)))]
-            else:
-                raise Exception("Use force_csr=True")
-                '''p = p0 @ self.T[lamda][k_init]
-                logT = np.log(self.T[lamda][k_init])
-                TlogT = np.multiply(self.T[lamda][k_init], logT)
-                self.rho[lamda] = [np.sum(p @ TlogT)]'''
-         
-        
-            if verbose:
-                print('PID ', os.getpid(), ' : ','Computing entropy ')
-                
-            t0 = time.time()
-    
-            for k in k_range:
-                if verbose and not k%1000:
-                    print('PID ', os.getpid(), ' : ',k, ' over ' , len(self.inter_T[lamda]))
-                    print(f'PID {os.getpid()} : {time.time()-t0:.2f}s')
-                    
-                T = self.T[lamda][k].tocsr()
-                T = T.toarray()
-                rho = T/np.trace(T)
-                # np_rho = rho.toarray()
-                # np_logrho = np.log(np.where(np_rho != 0, np_rho, 1))
-                # np_rhologrho = np_rho  * np_logrho
-                # # np_rhologrho[np.isnan(np_rhologrho)] = 0
-                # rhologrho = csr_matrix(np_rhologrho)
-                # del np_rhologrho
-                # del np_rho
-                # del np_logrho
-                # self.simple_vNS[lamda].append(-rhologrho.trace())
-                L = self.laplacians.toarray()
-                self.simple_vNS[lamda].append(1/np.log(self.num_nodes) * np.trace(self.times[k] * rho @ L) + np.log(np.trace(T)))
-                del T
-                del rho
-
-            t_end = time.time()-t0
-            
-            
-            if verbose:
-                print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
-        else:
-            if verbose:
                 print('PID ', os.getpid(), ' : ','Entropy already computed for lamda={0}'.format(lamda))
-
-    def compute_entropy2(self, lamda=None, t_start=None, t_stop=None,
-                                    verbose=False,
-                                    # save_intermediate=True,
-                                    reverse_time=False,
-                                    force_csr=True):
-        """
-        
-        Computes interevent transition matrices as T_k(lamda) = expm(-tau_k*lamda*L_k).
-        
-        The transition matrix T_k is saved in `self.inter_T[lamda][k]`, where 
-        self.inter_T is a dictionary with lamda as keys and lists of transition
-        matrices as values.
-        
-        will compute from self.times[self._k_start_laplacians] until 
-        self.times[self._k_stop_laplacians-1]
-        
-        the transition matrix at step k, is the probability transition matrix
-        between times[k] and times[k+1]
-        
-        Parameters
-        ----------
-        lamda : float, optional
-            Random walk rate, dynamical resolution parameter. The default (None)
-            is 1 over the median inter event time.
-        t_start : float or int, optional
-            Starting time, passed to `compute_laplacian_matrices` if the 
-            Laplacians have not yet been computed.
-            Otherwise is not used.
-            The computation starts at self.times[self._k_start_laplacians].
-            The default is None, i.e. starts at the beginning of times.
-        t_stop : float or int, optional
-            Same than `t_start` but for the ending time of computations.
-            Computations stop at self.times[self._k_stop_laplacians-1].
-            Default is end of times.
-        verbose : bool, optional
-            The default is False.
-        fix_tau_k : bool, optional
-            If true, all interevent times (tau_k) in the formula above are set to 1. 
-            This decouples the dynamic scale from the length of event which
-            is useful for temporal networks with instantaneous events.
-            The default is False.
-        use_sparse_stoch : bool, optional
-            Whether to use custom sparse stochastic matrix format to save the
-            inter transition matrices. Especially useful for large networks as 
-            the matrix exponential is then computed on each connected component 
-            separately (more memory efficient). The default is False.
-        dense_expm : bool, optional
-            Whether to use the dense version of the matrix exponential algorithm
-            at each time steps. Recommended for not too large networks. 
-            The inter trans. matrices are still saved as sparse scipy matrices
-            as they usually have many zero values. The default is True. Has no
-            effect is use_sparse_stoch is True.
-
-        Returns
-        -------
-        None.
-
-        """
-        
-        if not hasattr(self, 'laplacians'):
-            self.compute_laplacian_matrices(t_start=t_start, t_stop=t_stop,
-                                            verbose=verbose)
-        if not hasattr(self, 'inter_T'):
-            self.compute_inter_transition_matrices()
-
-        if not hasattr(self, 'T'):
-            self.compute_transition_matrices()   
-    
-        if not hasattr(self, 'S2'):
-            self.S2 = dict()
-
-        
-        if reverse_time:
-            k_init = len(self.inter_T[lamda])-1
-            k_range = reversed(range(0, k_init))
-            if verbose:
-                print('PID ', os.getpid(), ' : reversed time computation.')
-        else:
-            k_init = 0
-            k_range = range(1,len(self.inter_T[lamda]))
-            
-        p0 = 1/self.num_nodes*np.ones(self.num_nodes)
-        
-        if lamda not in self.S2.keys():
-            #if save_intermediate:
-            if force_csr:
-                # forcing the first matrix to csr, will ensure that 
-                # all products are done in csr format,
-                # since CSR @ SparseStochMat t is not implemented
-                p = p0 @ self.T[lamda][k_init].tocsr()
-                diagp = csr_matrix(np.diag(p))
-                T = self.T[lamda][k_init].tocsr()
-                Q = -lamda*self.laplacians[k_init]
-                diagpQ= diagp @ Q
-                array_diagpQ = np.asarray(diagpQ.toarray())
-                
-                entropy2 = 0
-                for i in range(array_diagpQ.shape[0]):
-                    for j in range(diagpQ.shape[1]):
-                        if np.isfinite(np.log(array_diagpQ[i][j]/array_diagpQ[j][i])):
-                            entropy2 += array_diagpQ[i][j] * np.log(array_diagpQ[i][j]/array_diagpQ[j][i])
-                self.S2[lamda] = [entropy2]
-            else:
-                raise Exception("Use force_csr=True")
-  
-            if verbose:
-                print('PID ', os.getpid(), ' : ','Computing entropy2 ')
-                
-            t0 = time.time()
-    
-            for k in k_range:
-                if verbose and not k%1000:
-                    print('PID ', os.getpid(), ' : ',k, ' over ' , len(self.inter_T[lamda]))
-                    print(f'PID {os.getpid()} : {time.time()-t0:.2f}s')
-                    
-                p = p0 @ self.T[lamda][k].tocsr()
-                diagp = csr_matrix(np.diag(p))
-                T = self.T[lamda][k].tocsr()
-                Q = -lamda*self.laplacians[k]
-                diagpQ= diagp @ Q
-                array_diagpQ = np.asarray(diagpQ.toarray())
-                
-                entropy2 = 0
-                for i in range(array_diagpQ.shape[0]):
-                    for j in range(diagpQ.shape[1]):
-                        if np.isfinite(np.log(array_diagpQ[i][j]/array_diagpQ[j][i])):
-                            entropy2 += array_diagpQ[i][j] * np.log(array_diagpQ[i][j]/array_diagpQ[j][i])
-                self.S2[lamda].append(entropy2)
-
-                
-            t_end = time.time()-t0
-            
-            
-            if verbose:
-                print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
-        else:
-            if verbose:
-                print('PID ', os.getpid(), ' : ','Entropy2 already computed for lamda={0}'.format(lamda)) 
-
-    def compute_new_vonNeumann_entropy(self, lamda=None, t_start=None, t_stop=None,
-                                    verbose=False,
-                                    # save_intermediate=True,
-                                    reverse_time=False,
-                                    force_csr=True,
-                                    time_domain=None):
-        """
-        
-        Computes interevent transition matrices as T_k(lamda) = expm(-tau_k*lamda*L_k).
-        
-        The transition matrix T_k is saved in `self.inter_T[lamda][k]`, where 
-        self.inter_T is a dictionary with lamda as keys and lists of transition
-        matrices as values.
-        
-        will compute from self.times[self._k_start_laplacians] until 
-        self.times[self._k_stop_laplacians-1]
-        
-        the transition matrix at step k, is the probability transition matrix
-        between times[k] and times[k+1]
-        
-        Parameters
-        ----------
-        lamda : float, optional
-            Random walk rate, dynamical resolution parameter. The default (None)
-            is 1 over the median inter event time.
-        t_start : float or int, optional
-            Starting time, passed to `compute_laplacian_matrices` if the 
-            Laplacians have not yet been computed.
-            Otherwise is not used.
-            The computation starts at self.times[self._k_start_laplacians].
-            The default is None, i.e. starts at the beginning of times.
-        t_stop : float or int, optional
-            Same than `t_start` but for the ending time of computations.
-            Computations stop at self.times[self._k_stop_laplacians-1].
-            Default is end of times.
-        verbose : bool, optional
-            The default is False.
-        fix_tau_k : bool, optional
-            If true, all interevent times (tau_k) in the formula above are set to 1. 
-            This decouples the dynamic scale from the length of event which
-            is useful for temporal networks with instantaneous events.
-            The default is False.
-        use_sparse_stoch : bool, optional
-            Whether to use custom sparse stochastic matrix format to save the
-            inter transition matrices. Especially useful for large networks as 
-            the matrix exponential is then computed on each connected component 
-            separately (more memory efficient). The default is False.
-        dense_expm : bool, optional
-            Whether to use the dense version of the matrix exponential algorithm
-            at each time steps. Recommended for not too large networks. 
-            The inter trans. matrices are still saved as sparse scipy matrices
-            as they usually have many zero values. The default is True. Has no
-            effect is use_sparse_stoch is True.
-
-        Returns
-        -------
-        None.
-
-        """
-        
-        if not hasattr(self, 'laplacians'):
-            self.compute_laplacian_matrices(t_start=t_start, t_stop=t_stop,
-                                            verbose=verbose)
-        if not hasattr(self, 'inter_T'):
-            self.compute_inter_transition_matrices()
-
-        if not hasattr(self, 'T'):
-            self.compute_transition_matrices()   
-    
-        if not hasattr(self, 'new_vNS'):
-            self.new_vNS = dict()
-
-        
-        if time_domain is None:
-            time_domain = self.times()
-        if reverse_time:
-            k_init = len(time_domain)-1
-            k_range = reversed(range(0, k_init))
-            if verbose:
-                print('PID ', os.getpid(), ' : reversed time computation.')
-        else:
-            k_init = len(time_domain)-1
-            k_range = range(1,len(time_domain))
-            
-        
-        if lamda not in self.new_vNS.keys():
-            if force_csr:
-                # forcing the first matrix to csr, will ensure that 
-                # all products are done in csr format,
-                # since CSR @ SparseStochMat t is not implemented
-                L = self.laplacians
-                T = self.T[lamda][k_init].tocsr()
-                rho = T/T.trace()
-                t0= time_domain[0]
-                self.new_vNS[lamda] = [- lamda * t0 * (rho @ L).trace() + np.log(T.trace())]
-            else:
-                raise Exception
-         
-            if verbose:
-                print('PID ', os.getpid(), ' : ','Computing entropy ')
-                
-            t0 = time.time()
-    
-            for k in k_range:
-                if verbose and not k%1000:
-                    print('PID ', os.getpid(), ' : ',k, ' over ' , len(self.inter_T[lamda]))
-                    print(f'PID {os.getpid()} : {time.time()-t0:.2f}s')
-                    
-                L = self.laplacians
-                T = self.T[lamda][k].tocsr()
-                rho = T/T.trace()
-                tk= time_domain[k]
-                self.new_vNS[lamda].append(- lamda * tk * (rho @ L).trace() + np.log(T.trace()))
-              
-            t_end = time.time()-t0
-            
-            
-            if verbose:
-                print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
-        else:
-            if verbose:
-                print('PID ', os.getpid(), ' : ','Entropy already computed for lamda={0}'.format(lamda))
-    
-    def compute_spectral_vonNeumann_entropy(self, lamda=None, t_start=None, t_stop=None,
-                                verbose=False,
-                                # save_intermediate=True,
-                                reverse_time=False,
-                                force_csr=True,
-                                time_domain=None):
-        """
-        
-        Computes interevent transition matrices as T_k(lamda) = expm(-tau_k*lamda*L_k).
-        
-        The transition matrix T_k is saved in `self.inter_T[lamda][k]`, where 
-        self.inter_T is a dictionary with lamda as keys and lists of transition
-        matrices as values.
-        
-        will compute from self.times[self._k_start_laplacians] until 
-        self.times[self._k_stop_laplacians-1]
-        
-        the transition matrix at step k, is the probability transition matrix
-        between times[k] and times[k+1]
-        
-        Parameters
-        ----------
-        lamda : float, optional
-            Random walk rate, dynamical resolution parameter. The default (None)
-            is 1 over the median inter event time.
-        t_start : float or int, optional
-            Starting time, passed to `compute_laplacian_matrices` if the 
-            Laplacians have not yet been computed.
-            Otherwise is not used.
-            The computation starts at self.times[self._k_start_laplacians].
-            The default is None, i.e. starts at the beginning of times.
-        t_stop : float or int, optional
-            Same than `t_start` but for the ending time of computations.
-            Computations stop at self.times[self._k_stop_laplacians-1].
-            Default is end of times.
-        verbose : bool, optional
-            The default is False.
-        fix_tau_k : bool, optional
-            If true, all interevent times (tau_k) in the formula above are set to 1. 
-            This decouples the dynamic scale from the length of event which
-            is useful for temporal networks with instantaneous events.
-            The default is False.
-        use_sparse_stoch : bool, optional
-            Whether to use custom sparse stochastic matrix format to save the
-            inter transition matrices. Especially useful for large networks as 
-            the matrix exponential is then computed on each connected component 
-            separately (more memory efficient). The default is False.
-        dense_expm : bool, optional
-            Whether to use the dense version of the matrix exponential algorithm
-            at each time steps. Recommended for not too large networks. 
-            The inter trans. matrices are still saved as sparse scipy matrices
-            as they usually have many zero values. The default is True. Has no
-            effect is use_sparse_stoch is True.
-
-        Returns
-        -------
-        None.
-
-        """
-        
-        if not hasattr(self, 'laplacians'):
-            self.compute_laplacian_matrices(t_start=t_start, t_stop=t_stop,
-                                            verbose=verbose)
-        if not hasattr(self, 'inter_T'):
-            self.compute_inter_transition_matrices()
-
-        if not hasattr(self, 'T'):
-            self.compute_transition_matrices()   
-
-        if not hasattr(self, 'spectral_vNS'):
-            self.spectral_vNS = dict()
-
-        
-        if time_domain is None:
-            time_domain = self.inter_T[lamda]
-        if reverse_time:
-            k_init = len(time_domain)-1
-            k_range = reversed(range(0, k_init))
-            if verbose:
-                print('PID ', os.getpid(), ' : reversed time computation.')
-        else:
-            k_init = 0
-            k_range = range(1,len(time_domain))
-            
-        
-        if lamda not in self.spectral_vNS.keys():
-            if force_csr:
-                # forcing the first matrix to csr, will ensure that 
-                # all products are done in csr format,
-                # since CSR @ SparseStochMat t is not implemented
-                T = self.T[lamda][k_init].tocsr()
-                T = T.toarray()
-                rho = T/T.trace()
-                # spectrum_rho = [z.real for z in eigsh(rho, k=self.num_nodes-2)[0]] # num_nodes -2 becusae of limits of eigs in number of eigevanlues
-                # spectrum_rho = np.array(spectrum_rho)
-                # log_spectrum_rho = np.log(np.where(spectrum_rho > 0, spectrum_rho, 1)) # make sure to have only positive eigenvalues
-                # spectrum_vNS = - np.sum(spectrum_rho*log_spectrum_rho) / (self.num_nodes-2)
-                # self.spectral_vNS[lamda] = [spectrum_vNS]
-
-                eigs = np.linalg.eigvalsh(rho) # this is for numpy arrays and it returns all the eigenvalues
-                eigs = np.where(eigs > 0, eigs, 1)
-                self.spectral_vNS[lamda] = [- 1/np.log(self.num_nodes) * np.sum(eigs*np.log(eigs))]
-                del T
-                del rho
-            else:
-                raise Exception
-            
-            if verbose:
-                print('PID ', os.getpid(), ' : ','Computing entropy ')
-                    
-            t0 = time.time()
-    
-            for k in k_range:
-                if verbose and not k%1000:
-                    print('PID ', os.getpid(), ' : ',k, ' over ' , len(self.inter_T[lamda]))
-                    print(f'PID {os.getpid()} : {time.time()-t0:.2f}s')
-                    
-                T = self.T[lamda][k].tocsr()
-                T = T.toarray()
-                rho = T/T.trace()
-                # spectrum_rho = [z.real for z in eigsh(rho, k=self.num_nodes-2)[0]] # num_nodes -2 becusae of limits of eigs in number of eigevanlues
-                # spectrum_rho = np.array(spectrum_rho)
-                # log_spectrum_rho = np.log(np.where(spectrum_rho > 0, spectrum_rho, 1)) # make sure to have only positive eigenvalues
-                # spectrum_vNS = - np.sum(spectrum_rho*log_spectrum_rho) / (self.num_nodes-2)
-                # self.spectral_vNS[lamda].append(spectrum_vNS)
-
-                eigs = np.linalg.eigvalsh(rho) # this is for numpy arrays and it returns all the eigenvalues
-                eigs = np.where(eigs > 0, eigs, 1)
-                self.spectral_vNS[lamda].append(- 1/np.log(self.num_nodes) * np.sum(eigs*np.log(eigs)))
-                del T
-                del rho
-            
-            t_end = time.time()-t0
-            
-            
-            if verbose:
-                print('PID ', os.getpid(), ' : ', f'finished in {t_end:.2f}s')
-        else:
-            if verbose:
-                print('PID ', os.getpid(), ' : ','Entropy already computed for lamda={0}'.format(lamda)) 
