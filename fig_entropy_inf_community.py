@@ -1,4 +1,5 @@
 import pickle
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -8,6 +9,9 @@ import auxiliary_functions
 from FlowStability import avg_norm_var_information
 from TemporalNetwork import ContTempNetwork
 from sankeyflow import Sankey
+
+
+START_TIME = time.perf_counter()
 
 
 ENTROPY_DIR = "//scratch/tmp/180/skoove/primaryschoolnet_rw/conditional_S_selected_hr"
@@ -101,7 +105,8 @@ def offset_flow_columns(flow_frames):
         target_offset = int(adjusted_frame["source"].max() + 1)
         adjusted_frame["target_label"] = adjusted_frame["target"] + target_offset
         adjusted_frames.append(adjusted_frame)
-        current_offset = int(adjusted_frame["target_label"].max())
+        # The next layer's source ids must start where this layer's targets start.
+        current_offset = target_offset
 
     return adjusted_frames
 
@@ -276,3 +281,4 @@ ax_c.set_frame_on(False)
 plt.tight_layout()
 # plt.savefig('/home/b/skoove/Desktop/ChangePointDetection/fig_entropy_inf_community.pdf', format='pdf', dpi=300, bbox_inches='tight')
 plt.show()
+print(f"Total runtime: {time.perf_counter() - START_TIME:.2f} s")
