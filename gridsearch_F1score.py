@@ -320,6 +320,7 @@ def grid_search_f1(
     save_signals: bool = False,
     signals_outdir: str | Path | None = None,
     signal_dir_order: str = "lambda_window",
+    selection_metric: str = "f1",
 ) -> dict:
     """
     Run a parallel grid-search over all (lambda, window) pairs.
@@ -330,9 +331,18 @@ def grid_search_f1(
     Optionally, the generated entropy signals can be saved to disk during the
     grid-search in a structured layout, either grouped first by lambda or first
     by window.
+
+    The best parameter pair can be selected either by maximizing the F1 score
+    (`selection_metric="f1"`) or by minimizing the Hausdorff distance
+    (`selection_metric="hausdorff"`).
     """
     lambdas = np.asarray(lambdas, dtype=float)
     windows = np.asarray(windows, dtype=float)
+
+    if selection_metric not in {"f1", "hausdorff"}:
+        raise ValueError(
+            "selection_metric must be either 'f1' or 'hausdorff'."
+        )
 
     t0 = time.time()
     lambda_results = Parallel(n_jobs=n_jobs, backend=backend, verbose=verbose)(
@@ -409,17 +419,49 @@ def grid_search_f1(
         signal_generation_intervals + change_point_detection_intervals + metrics_intervals
     )
 
-    if np.all(np.isnan(score_array)):
-        best_index = None
-        best_lamda = None
-        best_window = None
-        best_score = math.nan
+    if selection_metric == "f1":
+        selection_array = score_array
+        if np.all(np.isnan(selection_array)):
+            best_index = None
+            best_lamda = None
+            best_window = None
+            best_score = math.nan
+            best_f1 = math.nan
+            best_hausdorff = math.nan
+        else:
+            best_flat = int(np.nanargmax(selection_array))
+            best_index = np.unravel_index(best_flat, selection_array.shape)
+            best_lamda = float(lambdas[best_index[0]])
+            best_window = float(windows[best_index[1]])
+            best_score = float(selection_array[best_index])
+            best_f1 = float(score_array[best_index])
+            best_hausdorff = float(hausdorff_array[best_index])
     else:
-        best_flat = int(np.nanargmax(score_array))
-        best_index = np.unravel_index(best_flat, score_array.shape)
-        best_lamda = float(lambdas[best_index[0]])
-        best_window = float(windows[best_index[1]])
-        best_score = float(score_array[best_index])
+        selection_array = hausdorff_array.copy()
+        if np.all(np.isnan(selection_array)):
+            best_index = None
+            best_lamda = None
+            best_window = None
+            best_score = math.nan
+            best_f1 = math.nan
+            best_hausdorff = math.nan
+        else:
+            selection_array[np.isnan(selection_array)] = math.inf
+            if np.all(np.isinf(selection_array)):
+                best_index = None
+                best_lamda = None
+                best_window = None
+                best_score = math.nan
+                best_f1 = math.nan
+                best_hausdorff = math.nan
+            else:
+                best_flat = int(np.argmin(selection_array))
+                best_index = np.unravel_index(best_flat, selection_array.shape)
+                best_lamda = float(lambdas[best_index[0]])
+                best_window = float(windows[best_index[1]])
+                best_score = float(hausdorff_array[best_index])
+                best_f1 = float(score_array[best_index])
+                best_hausdorff = float(hausdorff_array[best_index])
 
     summary = {
         "lambdas": lambdas,
@@ -430,6 +472,8 @@ def grid_search_f1(
         "save_signals": save_signals,
         "signals_outdir": str(signals_outdir) if signals_outdir is not None else None,
         "signal_dir_order": signal_dir_order,
+        "selection_metric": selection_metric,
+        "selection_array": score_array if selection_metric == "f1" else hausdorff_array,
         "score_array": score_array,
         "f1_array": score_array,
         "hausdorff_array": hausdorff_array,
@@ -452,7 +496,8 @@ def grid_search_f1(
         "best_lamda": best_lamda,
         "best_window": best_window,
         "best_score": best_score,
-        "best_f1": best_score,
+        "best_f1": best_f1,
+        "best_hausdorff": best_hausdorff,
         "elapsed_seconds": elapsed,
     }
 
@@ -505,14 +550,17 @@ if __name__ == "__main__":
         save_signals=True,
         signals_outdir="./gridsearch_results/signals",
         signal_dir_order="lambda_window",
+        selection_metric="f1",
     )
 
     print("Number of samples:", len(training_samples))
     print("Score array shape:", summary["score_array"].shape)
+    print("Selection metric:", summary["selection_metric"])
     print("Best lamda:", summary["best_lamda"])
     print("Best window:", summary["best_window"])
-    print("Best mean F1:", summary["best_score"])
-    print("Hausdorff at best F1 params:", summary["hausdorff_array"][summary["best_index"]] if summary["best_index"] is not None else math.nan)
+    print("Best selected score:", summary["best_score"])
+    print("Best mean F1:", summary["best_f1"])
+    print("Best mean Hausdorff:", summary["best_hausdorff"])
     print("Total runtime:", summary["elapsed_seconds"])
     print("Total signal generation time:", summary["total_signal_generation_seconds"])
     print("Total change-point detection time:", summary["total_change_point_detection_seconds"])
