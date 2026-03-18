@@ -130,6 +130,16 @@ def merge_wall_clock_intervals(intervals: Sequence[tuple[float, float]]) -> floa
     return total
 
 
+def nanmean_or_nan(values: np.ndarray) -> float:
+    """
+    Return `nanmean(values)` or `nan` when the array has no valid entries.
+    """
+    values = np.asarray(values, dtype=float)
+    if values.size == 0 or np.all(np.isnan(values)):
+        return math.nan
+    return float(np.nanmean(values))
+
+
 # -----------------------------------------------------------------------------
 # Lambda worker
 # -----------------------------------------------------------------------------
@@ -418,6 +428,11 @@ def grid_search_f1(
     timed_wall_clock_seconds = merge_wall_clock_intervals(
         signal_generation_intervals + change_point_detection_intervals + metrics_intervals
     )
+    num_samples = len(samples)
+    num_lambda_jobs = len(lambdas)
+    num_parameter_pairs = len(lambdas) * len(windows)
+    num_compute_signals_calls = num_samples * num_lambda_jobs
+    num_pair_evaluations = num_samples * num_parameter_pairs
 
     if selection_metric == "f1":
         selection_array = score_array
@@ -469,6 +484,11 @@ def grid_search_f1(
         "margin": float(margin),
         "sample_fraction": float(sample_fraction),
         "kernel": kernel,
+        "num_samples": num_samples,
+        "num_lambda_jobs": num_lambda_jobs,
+        "num_parameter_pairs": num_parameter_pairs,
+        "num_compute_signals_calls": num_compute_signals_calls,
+        "num_pair_evaluations": num_pair_evaluations,
         "save_signals": save_signals,
         "signals_outdir": str(signals_outdir) if signals_outdir is not None else None,
         "signal_dir_order": signal_dir_order,
@@ -489,6 +509,24 @@ def grid_search_f1(
         "cumulative_signal_generation_seconds": float(np.nansum(signal_generation_time_per_lambda)),
         "cumulative_change_point_detection_seconds": float(np.nansum(change_point_detection_time_per_lambda)),
         "cumulative_metrics_seconds": float(np.nansum(metrics_time_per_lambda)),
+        "average_signal_generation_seconds_per_lambda_job": nanmean_or_nan(signal_generation_time_per_lambda),
+        "average_change_point_detection_seconds_per_lambda_job": nanmean_or_nan(change_point_detection_time_per_lambda),
+        "average_metrics_seconds_per_lambda_job": nanmean_or_nan(metrics_time_per_lambda),
+        "average_signal_generation_seconds_per_parameter_pair": nanmean_or_nan(signal_generation_time_array),
+        "average_change_point_detection_seconds_per_parameter_pair": nanmean_or_nan(change_point_detection_time_array),
+        "average_metrics_seconds_per_parameter_pair": nanmean_or_nan(metrics_time_array),
+        "average_compute_signals_for_lambda_timed_seconds": (
+            float(np.nansum(signal_generation_time_per_lambda)) / num_compute_signals_calls
+            if num_compute_signals_calls > 0 else math.nan
+        ),
+        "average_detect_change_points_from_signal_seconds": (
+            float(np.nansum(change_point_detection_time_per_lambda)) / num_pair_evaluations
+            if num_pair_evaluations > 0 else math.nan
+        ),
+        "average_metrics_step_seconds": (
+            float(np.nansum(metrics_time_per_lambda)) / num_pair_evaluations
+            if num_pair_evaluations > 0 else math.nan
+        ),
         "timed_wall_clock_seconds": timed_wall_clock_seconds,
         "lambda_results": lambda_results,
         "results_by_lambda": results_by_lambda,
@@ -562,13 +600,22 @@ if __name__ == "__main__":
     print("Best mean F1:", summary["best_f1"])
     print("Best mean Hausdorff:", summary["best_hausdorff"])
     print("Total runtime:", summary["elapsed_seconds"])
-    print("Total signal generation time:", summary["total_signal_generation_seconds"])
-    print("Total change-point detection time:", summary["total_change_point_detection_seconds"])
-    print("Total metrics computation time:", summary["total_metrics_seconds"])
+    print("Whole-run signal-generation wall time:", summary["total_signal_generation_seconds"])
+    print("Whole-run change-point detection wall time:", summary["total_change_point_detection_seconds"])
+    print("Whole-run metrics wall time:", summary["total_metrics_seconds"])
+    print("Average signal-generation time per lambda job:", summary["average_signal_generation_seconds_per_lambda_job"])
+    print("Average change-point detection time per lambda job:", summary["average_change_point_detection_seconds_per_lambda_job"])
+    print("Average metrics time per lambda job:", summary["average_metrics_seconds_per_lambda_job"])
+    print("Average compute_signals_for_lambda_timed call:", summary["average_compute_signals_for_lambda_timed_seconds"])
+    print("Average detect_change_points_from_signal call:", summary["average_detect_change_points_from_signal_seconds"])
+    print("Average metrics step call:", summary["average_metrics_step_seconds"])
+    print("Average signal-generation time per parameter pair:", summary["average_signal_generation_seconds_per_parameter_pair"])
+    print("Average change-point detection time per parameter pair:", summary["average_change_point_detection_seconds_per_parameter_pair"])
+    print("Average metrics time per parameter pair:", summary["average_metrics_seconds_per_parameter_pair"])
     print("Signals saved:", summary["save_signals"])
     print("Signals output directory:", summary["signals_outdir"])
     print("Signals directory order:", summary["signal_dir_order"])
     if summary["best_index"] is not None:
-        print("Signal generation time at best params:", summary["signal_generation_time_array"][summary["best_index"]])
-        print("Change-point detection time at best params:", summary["change_point_detection_time_array"][summary["best_index"]])
-        print("Metrics computation time at best params:", summary["metrics_time_array"][summary["best_index"]])
+        print("Signal generation time at best params (all samples):", summary["signal_generation_time_array"][summary["best_index"]])
+        print("Change-point detection time at best params (all samples):", summary["change_point_detection_time_array"][summary["best_index"]])
+        print("Metrics computation time at best params (all samples):", summary["metrics_time_array"][summary["best_index"]])
