@@ -60,5 +60,5 @@ lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
 #fig.legend(lines, labels, fontsize='xx-small', bbox_to_anchor=(0.85,0), ncol=5)
 
 plt.tight_layout()  # otherwise the right y-label is slightly clipped
-#plt.savefig('/home/b/skoove/Desktop/ChangePointDetection/fig_primaryschool_window.pdf', format='png', dpi=300, bbox_inches='tight')
+#plt.savefig('/home/b/skoove/Desktop/ChangePointDetection/fig_primaryschool_window.pdf', format='pdf', dpi=300, bbox_inches='tight')
 plt.show()

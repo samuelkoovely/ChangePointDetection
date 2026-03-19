@@ -203,16 +203,16 @@ gs = fig.add_gridspec(1, 3)
 
 ax_a = fig.add_subplot(gs[0, 0])
 list_colors = auxiliary_functions.generate_plasma_colors(len(SELECTED_LAMBDAS))
-for color, lamda, entropy in zip(list_colors, SELECTED_LAMBDAS, Conditional_S_selected_hr):
-    ax_a.plot(
-        net_times_hours[:1556],
-        entropy[:1556],
-        color=color,
-        alpha=0.30,
-        label=f"lamda = {lamda:.11f}",
-    )
-ax_a.set_xlabel("t")
-ax_a.set_title("(A) Conditional entropy H(pt | p0)", loc="left", fontsize=12)
+
+window = 180
+lamda = np.logspace(-5,0,10)[-1]
+with open(f'//scratch/tmp/180/skoove/primaryschoolnet_rw/window_S_selected/{window}/window_S{lamda:.11f}', 'rb') as f:
+            S = pickle.load(f)['window_S'][f'{lamda:.11f}']
+
+ax_a.plot(net_times_hours[(window // 2)+1 :1556- (window // 2)], S[1:1556-window], color = list_colors[-1], alpha = 0.75)
+ax_a.set_xlabel('Time')
+    
+ax_a.set_title("(A) Localized Conditional entropy", loc="left", fontsize=12)
 
 ax_b = fig.add_subplot(gs[0, 1])
 nclusters_960_1320, nvi_960_1320 = interval_summaries["960_1320"]
@@ -274,11 +274,11 @@ ax_c.legend(
     loc="center left",
     bbox_to_anchor=(1, 0.5),
 )
-ax_c.set_title("(C) Community Evolution - Primary School", loc="left", fontsize=12)
+ax_c.set_title("(C) Community Evolution - Primary School - Day 1", loc="left", fontsize=12)
 ax_c.set_yticks([])
 ax_c.set_frame_on(False)
 
 plt.tight_layout()
-# plt.savefig('/home/b/skoove/Desktop/ChangePointDetection/fig_entropy_inf_community.pdf', format='pdf', dpi=300, bbox_inches='tight')
+#plt.savefig('/home/b/skoove/Desktop/ChangePointDetection/fig_entropy_inf_community.pdf', format='pdf', dpi=300, bbox_inches='tight')
 plt.show()
 print(f"Total runtime: {time.perf_counter() - START_TIME:.2f} s")

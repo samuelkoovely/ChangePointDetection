@@ -66,7 +66,7 @@ def plot_network_panel(ax, forward_curves, matrices, panel_title,
         ax.plot(forward_curves[curve_idx][0], forward_curves[curve_idx][1], color=forward_colors[color_idx], alpha=1)
 
 
-    ax.set_xlim(-5, 310)
+    ax.set_xlim(-0, 190)
     ax.set_xlabel("t [s]")
     ax.set_title(panel_title, loc='left', fontsize=14)
 
