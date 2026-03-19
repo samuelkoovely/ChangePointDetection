@@ -7,7 +7,7 @@ with open('block2activities.pkl', 'rb') as handle:
     dataset = pickle.load(handle)
 
 
-window_aggregation = 10 
+aggregation_window = 10 
 sanpshots_dataset = []
 
 for data_index in range(len(dataset)):
@@ -22,15 +22,15 @@ for data_index in range(len(dataset)):
     starting_times = []
     ending_times = []
 
-    for i in range(0, int(net.times[-1]), window_aggregation):
-        matrix_snapshot = net.compute_static_adjacency_matrix(start_time=i, end_time=i+window_aggregation).toarray()
+    for i in range(0, int(net.times[-1] - aggregation_window), aggregation_window): # - aggregation_window to avoid tail
+        matrix_snapshot = net.compute_static_adjacency_matrix(start_time=i, end_time=i+aggregation_window).toarray()
         #snapshots.append(matrix_snapshot)
 
         matrix_snapshot = (matrix_snapshot > 0).astype(int)
         source_nodes_snapshot = np.nonzero(matrix_snapshot)[0]
         target_nodes_snapshot = np.nonzero(matrix_snapshot)[1]
         starting_times_snapshot = [i] * len(source_nodes_snapshot)
-        ending_times_snapshot = [i+window_aggregation] * len(source_nodes_snapshot)
+        ending_times_snapshot = [i+aggregation_window] * len(source_nodes_snapshot)
 
         source_nodes += list(source_nodes_snapshot)
         target_nodes += list(target_nodes_snapshot)
@@ -44,10 +44,10 @@ for data_index in range(len(dataset)):
                         merge_overlapping_events=True)
 
     tnet = {}
-    tnet['net'] = snap_net
+    tnet['tnet'] = snap_net
     #tnet['snapshots'] = snapshots
-    tnet['window_aggregation'] = window_aggregation
-    tnet['t_split'] = t_split // window_aggregation
+    tnet['aggregation_window'] = aggregation_window
+    tnet['bkp'] = t_split // aggregation_window
     sanpshots_dataset.append(tnet)
 
 
