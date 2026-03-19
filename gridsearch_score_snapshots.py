@@ -144,7 +144,7 @@ def compute_and_store_signals_for_lambda(
             signals_by_window[window_key].append(signal_result)
 
             if save_signals and signals_outdir is not None:
-                lamda_dir = f"lambda_{lamda:.11f}"
+                lamda_dir = f"lamda_{lamda:.11f}"
                 window_dir = f"window_{window:g}"
                 sample_dir = sample.name if sample.name is not None else f"sample_{sample_idx}"
 
@@ -250,7 +250,7 @@ def evaluate_precomputed_lambda_signals(
 # Grid-search core
 # -----------------------------------------------------------------------------
 
-def grid_search_f1(
+def grid_search(
     samples: Sequence[CPSample],
     lambdas: Sequence[float],
     windows: Sequence[float],
@@ -437,8 +437,8 @@ if __name__ == "__main__":
 
     training_samples = [
         CPSample(
-            data=entry["net"],
-            true_change_points=[float(entry["t_split"])],
+            data=entry["tnet"],
+            true_change_points=[float(entry["bkp"])],
             n_bkps=1,
             name=f"sample_{i}",
         )
@@ -450,7 +450,7 @@ if __name__ == "__main__":
     #     signals_outdir / sample_name / lambda_xxx / window_x
     # With `signal_dir_order="window_lambda"`, the layout is:
     #     signals_outdir / sample_name / window_x / lambda_xxx
-    summary = grid_search_f1(
+    summary = grid_search(
         samples=training_samples,
         lambdas=lambdas,
         windows=windows,
@@ -463,7 +463,7 @@ if __name__ == "__main__":
         kernel="linear",
         save_signals=True,
         signals_outdir="./gridsearch_results/block2activities_snapshots/signals",
-        signal_dir_order="lambda_window",
+        signal_dir_order="lamda_window",
         selection_metric="hausdorff",
     )
 
