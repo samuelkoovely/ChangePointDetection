@@ -97,7 +97,7 @@ def worker(lamda: float):
                 "window": window,
                 "k_samples": k_samples,
                 "t_samples": t_samples,
-                "window_S": S_arr,
+                "signal": S_arr,
             }
 
             outdir = base / "window_S" / str(window)
@@ -112,7 +112,7 @@ def worker(lamda: float):
         for window in windows:
             outdir = base / "window_S" / str(window)
             outdir.mkdir(parents=True, exist_ok=True)
-            S_rate = {"lamda": f"{lamda:.11f}", "window": window, "window_S": 10}
+            S_rate = {"lamda": f"{lamda:.11f}", "window": window, "signal": 10}
             outfile = outdir / f"window_S{lamda:.11f}"
             with open(outfile, "wb") as f:
                 pickle.dump(S_rate, f)

@@ -112,23 +112,16 @@ def compute_and_store_signals_for_lambda(
     p0: np.ndarray | None = None,
     save_signals: bool = False,
     signals_outdir: str | Path | None = None,
-    signal_dir_order: str = "lambda_window",
 ) -> dict:
     """
     Compute and store all signals associated with one lambda value.
 
-    If requested, the generated entropy signals are also saved to disk in an
-    ordered folder layout, either `outdir / lambda / window` or
-    `outdir / window / lambda`.
+    If requested, the generated entropy signals are also saved to disk under
+    one folder per sample. Each filename encodes both the lambda and window.
     """
     windows = [float(w) for w in windows]
     signals_by_window = {float(window): [] for window in windows}
     sample_names = [sample.name for sample in samples]
-
-    if signal_dir_order not in {"lambda_window", "window_lambda"}:
-        raise ValueError(
-            "signal_dir_order must be either 'lambda_window' or 'window_lambda'."
-        )
 
     for sample_idx, sample in enumerate(samples):
         sample_signals = compute_signals_for_lambda(
@@ -144,15 +137,8 @@ def compute_and_store_signals_for_lambda(
             signals_by_window[window_key].append(signal_result)
 
             if save_signals and signals_outdir is not None:
-                lamda_dir = f"lamda_{lamda:.11f}"
-                window_dir = f"window_{window:g}"
                 sample_dir = sample.name if sample.name is not None else f"sample_{sample_idx}"
-
-                if signal_dir_order == "lambda_window":
-                    signal_outdir = Path(signals_outdir) / sample_dir / lamda_dir / window_dir
-                else:
-                    signal_outdir = Path(signals_outdir) / sample_dir / window_dir / lamda_dir
-
+                signal_outdir = Path(signals_outdir) / sample_dir
                 save_signal_result(signal_result, signal_outdir)
 
     return {
@@ -264,7 +250,6 @@ def grid_search(
     p0: np.ndarray | None = None,
     save_signals: bool = False,
     signals_outdir: str | Path | None = None,
-    signal_dir_order: str = "lambda_window",
     selection_metric: str = "f1",
 ) -> dict:
     """
@@ -274,8 +259,8 @@ def grid_search(
     lambda-dependent preprocessing can be reused across all window values.
 
     Optionally, the generated entropy signals can be saved to disk during the
-    grid-search in a structured layout, either grouped first by lambda or first
-    by window.
+    grid-search, with one folder per sample and filenames that encode both the
+    lambda and window.
 
     The best parameter pair can be selected either by maximizing the F1 score
     (`selection_metric="f1"`) or by minimizing the Hausdorff distance
@@ -300,7 +285,6 @@ def grid_search(
             p0=p0,
             save_signals=save_signals,
             signals_outdir=signals_outdir,
-            signal_dir_order=signal_dir_order,
         )
         for lamda in lambdas
     )
@@ -394,7 +378,6 @@ def grid_search(
         "num_parameter_pairs": num_parameter_pairs,
         "save_signals": save_signals,
         "signals_outdir": str(signals_outdir) if signals_outdir is not None else None,
-        "signal_dir_order": signal_dir_order,
         "selection_metric": selection_metric,
         "selection_array": score_array if selection_metric == "f1" else hausdorff_array,
         "score_array": score_array,
@@ -445,11 +428,9 @@ if __name__ == "__main__":
         for i, entry in enumerate(dataset)
     ]
 
-    # Generated entropy signals can optionally be saved while running the grid-search.
-    # With `signal_dir_order="lambda_window"`, the layout is:
-    #     signals_outdir / sample_name / lambda_xxx / window_x
-    # With `signal_dir_order="window_lambda"`, the layout is:
-    #     signals_outdir / sample_name / window_x / lambda_xxx
+    # Generated entropy signals can optionally be saved while running the
+    # grid-search under:
+    #     signals_outdir / sample_name / signal_lamda_xxx_window_y.pkl
     summary = grid_search(
         samples=training_samples,
         lambdas=lambdas,
@@ -463,7 +444,6 @@ if __name__ == "__main__":
         kernel="linear",
         save_signals=True,
         signals_outdir="./gridsearch_results/block2activities_snapshots/signals",
-        signal_dir_order="lamda_window",
         selection_metric="hausdorff",
     )
 
@@ -480,4 +460,3 @@ if __name__ == "__main__":
     print("Detection and metrics phase runtime:", summary["detection_metrics_phase_seconds"])
     print("Signals saved:", summary["save_signals"])
     print("Signals output directory:", summary["signals_outdir"])
-    print("Signals directory order:", summary["signal_dir_order"])

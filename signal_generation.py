@@ -136,8 +136,7 @@ def compute_window_entropy_signal(
             "window": float(window),
             "k_samples": np.array([], dtype=int),
             "t_samples": np.array([], dtype=float),
-            "window_S": np.array([], dtype=float),
-            "signal": np.empty((0, 1), dtype=float),
+            "signal": np.array([], dtype=float),
         }
 
     if p0 is None:
@@ -163,15 +162,12 @@ def compute_window_entropy_signal(
         k_samples=k_samples,
     )
 
-    signal = S_arr.reshape(-1, 1)
-
     return {
         "lamda": float(lamda),
         "window": float(window),
         "k_samples": k_samples,
         "t_samples": np.asarray(t_samples, dtype=float),
-        "window_S": S_arr,
-        "signal": signal,
+        "signal": S_arr,
     }
 
 
@@ -285,15 +281,39 @@ def _compute_signals_for_lambda_impl(
 # Optional persistence helpers
 # -----------------------------------------------------------------------------
 
+def get_signal_result_filename(lamda: float, window: float, suffix: str = ".pkl") -> str:
+    """
+    Return the canonical filename for one saved entropy signal.
+    """
+    return f"signal_lamda_{float(lamda):.11f}_window_{float(window):g}{suffix}"
+
+
+def get_signal_result_path(outdir: str | Path, lamda: float, window: float) -> Path:
+    """
+    Return the full path for one saved entropy signal inside a sample folder.
+    """
+    return Path(outdir) / get_signal_result_filename(lamda=lamda, window=window)
+
+
+def load_signal_result(outdir: str | Path, lamda: float, window: float) -> dict[str, Any]:
+    """
+    Load one saved entropy signal from a sample folder.
+    """
+    filepath = get_signal_result_path(outdir=outdir, lamda=lamda, window=window)
+    with open(filepath, "rb") as handle:
+        return pickle.load(handle)
+
+
 def save_signal_result(result: dict[str, Any], outdir: str | Path) -> Path:
     """
-    Save one signal result dictionary to disk.
+    Save one signal result dictionary to disk inside a sample folder.
     """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
     lamda = float(result["lamda"])
-    outfile = outdir / f"window_S{lamda:.11f}"
+    window = float(result["window"])
+    outfile = get_signal_result_path(outdir=outdir, lamda=lamda, window=window)
     with open(outfile, "wb") as f:
         pickle.dump(result, f)
     return outfile
@@ -305,10 +325,8 @@ def save_signals_for_lambda(
     base: str | Path,
 ) -> None:
     """
-    Save all window-specific signal results for one lambda using the same folder
-    layout as the original script.
+    Save all window-specific signal results for one lambda in a single folder.
     """
     base = Path(base)
-    for window, result in results_by_window.items():
-        outdir = base / "window_S" / str(window)
-        save_signal_result(result, outdir)
+    for result in results_by_window.values():
+        save_signal_result(result, base)

@@ -21,11 +21,9 @@ training_samples = [
     for i, entry in enumerate(dataset)
 ]
 
-# Generated entropy signals can optionally be saved while running the grid-search.
-# With `signal_dir_order="lambda_window"`, the layout is:
-#     signals_outdir / sample_name / lambda_xxx / window_x
-# With `signal_dir_order="window_lambda"`, the layout is:
-#     signals_outdir / sample_name / window_x / lambda_xxx
+# Generated entropy signals can optionally be saved while running the
+# grid-search under:
+#     signals_outdir / sample_name / signal_lamda_xxx_window_y.pkl
 summary = grid_search(
     samples=training_samples,
     lambdas=lambdas,
@@ -39,7 +37,6 @@ summary = grid_search(
     kernel="linear",
     save_signals=True,
     signals_outdir="./gridsearch_results/block2activities_snapshots/signals",
-    signal_dir_order="lambda_window",
     selection_metric="hausdorff",
 )
 
@@ -56,4 +53,3 @@ print("Signal generation phase runtime:", summary["signal_generation_phase_secon
 print("Detection and metrics phase runtime:", summary["detection_metrics_phase_seconds"])
 print("Signals saved:", summary["save_signals"])
 print("Signals output directory:", summary["signals_outdir"])
-print("Signals directory order:", summary["signal_dir_order"])

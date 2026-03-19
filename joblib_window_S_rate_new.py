@@ -24,12 +24,12 @@ def worker(lamda):
                                     lamda=lamda, force_csr=True,
                                     time_domain= list(np.arange(0,range)))
  
-        S_rate={'lamda': f'{lamda:.11f}', 'window_S': S}
+        S_rate={'lamda': f'{lamda:.11f}', 'signal': S}
         file= folder + f'window_S_selected_new/{window}/window_S{lamda:.11f}'
         with open(file, 'wb') as fopen:
             pickle.dump(S_rate, fopen)
     except ValueError:
-        S_rate={'lamda': f'{lamda:.11f}', 'window_S': 10}
+        S_rate={'lamda': f'{lamda:.11f}', 'signal': 10}
         print('error with lamda')
     
     print(lamda)
