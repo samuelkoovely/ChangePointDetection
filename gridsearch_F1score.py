@@ -21,7 +21,7 @@ import ruptures as rpt
 from joblib import Parallel, delayed
 
 from evaluation_metrics import f1_score, hausdorff_distance
-from signal_generation import compute_signals_for_lambda_timed, save_signal_result
+from signal_generation import compute_signals_for_lambda, save_signal_result
 
 
 # -----------------------------------------------------------------------------
@@ -100,99 +100,30 @@ def detect_change_points_from_signal(
     return selected_times[breakpoint_indices].tolist()
 
 
-def merge_wall_clock_intervals(intervals: Sequence[tuple[float, float]]) -> float:
-    """
-    Merge wall-clock intervals and return the covered duration in seconds.
-
-    This is used to build summary timings that remain comparable to the overall
-    elapsed runtime when lambda workers execute in parallel.
-    """
-    normalized = sorted(
-        (float(start), float(stop))
-        for start, stop in intervals
-        if float(stop) > float(start)
-    )
-
-    if not normalized:
-        return 0.0
-
-    total = 0.0
-    current_start, current_stop = normalized[0]
-    for start, stop in normalized[1:]:
-        if start <= current_stop:
-            current_stop = max(current_stop, stop)
-            continue
-
-        total += current_stop - current_start
-        current_start, current_stop = start, stop
-
-    total += current_stop - current_start
-    return total
-
-
-def nanmean_or_nan(values: np.ndarray) -> float:
-    """
-    Return `nanmean(values)` or `nan` when the array has no valid entries.
-    """
-    values = np.asarray(values, dtype=float)
-    if values.size == 0 or np.all(np.isnan(values)):
-        return math.nan
-    return float(np.nanmean(values))
-
-
 # -----------------------------------------------------------------------------
-# Lambda worker
+# Signal generation phase
 # -----------------------------------------------------------------------------
 
-def evaluate_lambda(
+def compute_and_store_signals_for_lambda(
     samples: Sequence[CPSample],
     lamda: float,
     windows: Sequence[float],
-    margin: float,
     sample_fraction: float = 0.1,
-    kernel: str = "linear",
     p0: np.ndarray | None = None,
     save_signals: bool = False,
     signals_outdir: str | Path | None = None,
     signal_dir_order: str = "lambda_window",
 ) -> dict:
     """
-    Evaluate all candidate windows for one lambda value.
-
-    The lambda-dependent preprocessing is performed once per sample and then
-    reused across all window values.
+    Compute and store all signals associated with one lambda value.
 
     If requested, the generated entropy signals are also saved to disk in an
     ordered folder layout, either `outdir / lambda / window` or
     `outdir / window / lambda`.
     """
     windows = [float(w) for w in windows]
-
-    score_array = np.empty(len(windows), dtype=float)
-    score_array[:] = np.nan
-
-    signal_generation_time_total = 0.0
-    change_point_detection_time_total = 0.0
-    metrics_time_total = 0.0
-    signal_generation_preprocessing_time_total = 0.0
-
-    signal_generation_time_per_window = {float(window): 0.0 for window in windows}
-    signal_generation_window_only_time_per_window = {float(window): 0.0 for window in windows}
-    change_point_detection_time_per_window = {float(window): 0.0 for window in windows}
-    metrics_time_per_window = {float(window): 0.0 for window in windows}
-
-    signal_generation_intervals: list[tuple[float, float]] = []
-    change_point_detection_intervals: list[tuple[float, float]] = []
-    metrics_intervals: list[tuple[float, float]] = []
-
-    per_window_f1_scores: dict[float, np.ndarray] = {}
-    per_window_hausdorff: dict[float, np.ndarray] = {}
-    predicted_change_points: dict[float, list[list[float]]] = {}
+    signals_by_window = {float(window): [] for window in windows}
     sample_names = [sample.name for sample in samples]
-
-    f1_accumulator = {float(window): [] for window in windows}
-    hausdorff_accumulator = {float(window): [] for window in windows}
-    preds_accumulator = {float(window): [] for window in windows}
 
     if signal_dir_order not in {"lambda_window", "window_lambda"}:
         raise ValueError(
@@ -200,34 +131,17 @@ def evaluate_lambda(
         )
 
     for sample_idx, sample in enumerate(samples):
-        signal_wall_start = time.time()
-        signal_bundle = compute_signals_for_lambda_timed(
+        sample_signals = compute_signals_for_lambda(
             net=sample.data,
             lamda=lamda,
             windows=windows,
             sample_fraction=sample_fraction,
             p0=p0,
         )
-        signal_wall_stop = time.time()
-        if signal_wall_stop > signal_wall_start:
-            signal_generation_intervals.append((signal_wall_start, signal_wall_stop))
-
-        signals_by_window = signal_bundle["signals_by_window"]
-        signal_timing = signal_bundle["timing"]
-        signal_generation_time_total += float(signal_timing["total_seconds"])
-        signal_generation_preprocessing_time_total += float(signal_timing["preprocessing_seconds"])
         for window in windows:
             window_key = float(window)
-            signal_generation_time_per_window[window_key] += float(
-                signal_timing["attributed_per_window_seconds"][window_key]
-            )
-            signal_generation_window_only_time_per_window[window_key] += float(
-                signal_timing["window_signal_seconds"][window_key]
-            )
-
-        for window in windows:
-            window_key = float(window)
-            signal_result = signals_by_window[window_key]
+            signal_result = sample_signals[window_key]
+            signals_by_window[window_key].append(signal_result)
 
             if save_signals and signals_outdir is not None:
                 lamda_dir = f"lambda_{lamda:.11f}"
@@ -241,43 +155,72 @@ def evaluate_lambda(
 
                 save_signal_result(signal_result, signal_outdir)
 
-            detection_wall_start = time.time()
-            t_detection_start = time.perf_counter()
+    return {
+        "lamda": float(lamda),
+        "windows": np.asarray(windows, dtype=float),
+        "signals_by_window": signals_by_window,
+        "sample_names": sample_names,
+    }
+
+
+# -----------------------------------------------------------------------------
+# Detection and metrics phase
+# -----------------------------------------------------------------------------
+
+def evaluate_precomputed_lambda_signals(
+    samples: Sequence[CPSample],
+    lamda: float,
+    windows: Sequence[float],
+    margin: float,
+    signals_by_window: dict[float, list[dict[str, Any]]],
+    kernel: str = "linear",
+) -> dict:
+    """
+    Evaluate all candidate windows for one lambda using precomputed signals.
+    """
+    windows = [float(w) for w in windows]
+
+    score_array = np.empty(len(windows), dtype=float)
+    score_array[:] = np.nan
+
+    per_window_f1_scores: dict[float, np.ndarray] = {}
+    per_window_hausdorff: dict[float, np.ndarray] = {}
+    predicted_change_points: dict[float, list[list[float]]] = {}
+    sample_names = [sample.name for sample in samples]
+
+    for j, window in enumerate(windows):
+        window_key = float(window)
+        window_signals = signals_by_window[window_key]
+        if len(window_signals) != len(samples):
+            raise ValueError(
+                f"Expected {len(samples)} precomputed signals for window={window_key}, "
+                f"got {len(window_signals)}."
+            )
+
+        window_f1_scores: list[float] = []
+        window_hausdorff_scores: list[float] = []
+        window_predicted_change_points: list[list[float]] = []
+
+        for sample, signal_result in zip(samples, window_signals):
             pred_cps = detect_change_points_from_signal(
                 signal=signal_result["signal"],
                 selected_times=signal_result["t_samples"],
                 n_bkps=sample.n_bkps,
                 kernel=kernel,
             )
-            detection_elapsed = time.perf_counter() - t_detection_start
-            detection_wall_stop = time.time()
-            if detection_wall_stop > detection_wall_start:
-                change_point_detection_intervals.append((detection_wall_start, detection_wall_stop))
-            change_point_detection_time_total += detection_elapsed
-            change_point_detection_time_per_window[window_key] += detection_elapsed
+            window_predicted_change_points.append(pred_cps)
+            window_f1_scores.append(f1_score(sample.true_change_points, pred_cps, margin))
+            window_hausdorff_scores.append(hausdorff_distance(sample.true_change_points, pred_cps))
 
-            metrics_wall_start = time.time()
-            t_metrics_start = time.perf_counter()
-            f1 = f1_score(sample.true_change_points, pred_cps, margin)
-            haus = hausdorff_distance(sample.true_change_points, pred_cps)
-            metrics_elapsed = time.perf_counter() - t_metrics_start
-            metrics_wall_stop = time.time()
-            if metrics_wall_stop > metrics_wall_start:
-                metrics_intervals.append((metrics_wall_start, metrics_wall_stop))
-            metrics_time_total += metrics_elapsed
-            metrics_time_per_window[window_key] += metrics_elapsed
-
-            f1_accumulator[window_key].append(f1)
-            hausdorff_accumulator[window_key].append(haus)
-            preds_accumulator[window_key].append(pred_cps)
-
-    for j, window in enumerate(windows):
-        window_f1_scores = np.asarray(f1_accumulator[float(window)], dtype=float)
-        window_hausdorff_scores = np.asarray(hausdorff_accumulator[float(window)], dtype=float)
-        per_window_f1_scores[float(window)] = window_f1_scores
-        per_window_hausdorff[float(window)] = window_hausdorff_scores
-        predicted_change_points[float(window)] = preds_accumulator[float(window)]
-        score_array[j] = float(np.mean(window_f1_scores)) if len(window_f1_scores) > 0 else math.nan
+        window_f1_scores_array = np.asarray(window_f1_scores, dtype=float)
+        window_hausdorff_scores_array = np.asarray(window_hausdorff_scores, dtype=float)
+        per_window_f1_scores[window_key] = window_f1_scores_array
+        per_window_hausdorff[window_key] = window_hausdorff_scores_array
+        predicted_change_points[window_key] = window_predicted_change_points
+        score_array[j] = (
+            float(np.mean(window_f1_scores_array))
+            if len(window_f1_scores_array) > 0 else math.nan
+        )
 
     return {
         "lamda": float(lamda),
@@ -286,25 +229,18 @@ def evaluate_lambda(
         "per_window_f1_scores": per_window_f1_scores,
         "per_window_hausdorff": per_window_hausdorff,
         "mean_f1_per_window": {
-            float(window): (float(np.mean(per_window_f1_scores[float(window)])) if len(per_window_f1_scores[float(window)]) > 0 else math.nan)
+            float(window): (
+                float(np.mean(per_window_f1_scores[float(window)]))
+                if len(per_window_f1_scores[float(window)]) > 0 else math.nan
+            )
             for window in windows
         },
         "mean_hausdorff_per_window": {
-            float(window): (float(np.mean(per_window_hausdorff[float(window)])) if len(per_window_hausdorff[float(window)]) > 0 else math.nan)
+            float(window): (
+                float(np.mean(per_window_hausdorff[float(window)]))
+                if len(per_window_hausdorff[float(window)]) > 0 else math.nan
+            )
             for window in windows
-        },
-        "timing": {
-            "signal_generation_total_seconds": signal_generation_time_total,
-            "signal_generation_preprocessing_total_seconds": signal_generation_preprocessing_time_total,
-            "change_point_detection_total_seconds": change_point_detection_time_total,
-            "metrics_total_seconds": metrics_time_total,
-            "signal_generation_per_window_seconds": signal_generation_time_per_window,
-            "signal_generation_window_only_per_window_seconds": signal_generation_window_only_time_per_window,
-            "change_point_detection_per_window_seconds": change_point_detection_time_per_window,
-            "metrics_per_window_seconds": metrics_time_per_window,
-            "signal_generation_intervals": signal_generation_intervals,
-            "change_point_detection_intervals": change_point_detection_intervals,
-            "metrics_intervals": metrics_intervals,
         },
         "predicted_change_points": predicted_change_points,
         "sample_names": sample_names,
@@ -355,14 +291,13 @@ def grid_search_f1(
         )
 
     t0 = time.time()
-    lambda_results = Parallel(n_jobs=n_jobs, backend=backend, verbose=verbose)(
-        delayed(evaluate_lambda)(
+    t_signal_phase_start = time.time()
+    lambda_signal_results = Parallel(n_jobs=n_jobs, backend=backend, verbose=verbose)(
+        delayed(compute_and_store_signals_for_lambda)(
             samples=samples,
             lamda=float(lamda),
             windows=windows,
-            margin=margin,
             sample_fraction=sample_fraction,
-            kernel=kernel,
             p0=p0,
             save_signals=save_signals,
             signals_outdir=signals_outdir,
@@ -370,30 +305,27 @@ def grid_search_f1(
         )
         for lamda in lambdas
     )
+    signal_generation_phase_seconds = time.time() - t_signal_phase_start
+
+    t_detection_phase_start = time.time()
+    lambda_results = [
+        evaluate_precomputed_lambda_signals(
+            samples=samples,
+            lamda=float(signal_bundle["lamda"]),
+            windows=windows,
+            margin=margin,
+            signals_by_window=signal_bundle["signals_by_window"],
+            kernel=kernel,
+        )
+        for signal_bundle in lambda_signal_results
+    ]
+    detection_metrics_phase_seconds = time.time() - t_detection_phase_start
     elapsed = time.time() - t0
 
     score_array = np.empty((len(lambdas), len(windows)), dtype=float)
     score_array[:] = np.nan
     hausdorff_array = np.empty((len(lambdas), len(windows)), dtype=float)
     hausdorff_array[:] = np.nan
-
-    signal_generation_time_array = np.empty((len(lambdas), len(windows)), dtype=float)
-    signal_generation_time_array[:] = np.nan
-    change_point_detection_time_array = np.empty((len(lambdas), len(windows)), dtype=float)
-    change_point_detection_time_array[:] = np.nan
-    metrics_time_array = np.empty((len(lambdas), len(windows)), dtype=float)
-    metrics_time_array[:] = np.nan
-
-    signal_generation_time_per_lambda = np.empty(len(lambdas), dtype=float)
-    signal_generation_time_per_lambda[:] = np.nan
-    change_point_detection_time_per_lambda = np.empty(len(lambdas), dtype=float)
-    change_point_detection_time_per_lambda[:] = np.nan
-    metrics_time_per_lambda = np.empty(len(lambdas), dtype=float)
-    metrics_time_per_lambda[:] = np.nan
-
-    signal_generation_intervals: list[tuple[float, float]] = []
-    change_point_detection_intervals: list[tuple[float, float]] = []
-    metrics_intervals: list[tuple[float, float]] = []
 
     results_by_lambda: dict[float, dict] = {}
     for i, res in enumerate(lambda_results):
@@ -402,37 +334,11 @@ def grid_search_f1(
             [res["mean_hausdorff_per_window"][float(window)] for window in windows],
             dtype=float,
         )
-        signal_generation_time_array[i, :] = np.array(
-            [res["timing"]["signal_generation_per_window_seconds"][float(window)] for window in windows],
-            dtype=float,
-        )
-        change_point_detection_time_array[i, :] = np.array(
-            [res["timing"]["change_point_detection_per_window_seconds"][float(window)] for window in windows],
-            dtype=float,
-        )
-        metrics_time_array[i, :] = np.array(
-            [res["timing"]["metrics_per_window_seconds"][float(window)] for window in windows],
-            dtype=float,
-        )
-        signal_generation_time_per_lambda[i] = float(res["timing"]["signal_generation_total_seconds"])
-        change_point_detection_time_per_lambda[i] = float(res["timing"]["change_point_detection_total_seconds"])
-        metrics_time_per_lambda[i] = float(res["timing"]["metrics_total_seconds"])
-        signal_generation_intervals.extend(res["timing"]["signal_generation_intervals"])
-        change_point_detection_intervals.extend(res["timing"]["change_point_detection_intervals"])
-        metrics_intervals.extend(res["timing"]["metrics_intervals"])
         results_by_lambda[float(res["lamda"])] = res
 
-    total_signal_generation_seconds = merge_wall_clock_intervals(signal_generation_intervals)
-    total_change_point_detection_seconds = merge_wall_clock_intervals(change_point_detection_intervals)
-    total_metrics_seconds = merge_wall_clock_intervals(metrics_intervals)
-    timed_wall_clock_seconds = merge_wall_clock_intervals(
-        signal_generation_intervals + change_point_detection_intervals + metrics_intervals
-    )
     num_samples = len(samples)
     num_lambda_jobs = len(lambdas)
     num_parameter_pairs = len(lambdas) * len(windows)
-    num_compute_signals_calls = num_samples * num_lambda_jobs
-    num_pair_evaluations = num_samples * num_parameter_pairs
 
     if selection_metric == "f1":
         selection_array = score_array
@@ -487,8 +393,6 @@ def grid_search_f1(
         "num_samples": num_samples,
         "num_lambda_jobs": num_lambda_jobs,
         "num_parameter_pairs": num_parameter_pairs,
-        "num_compute_signals_calls": num_compute_signals_calls,
-        "num_pair_evaluations": num_pair_evaluations,
         "save_signals": save_signals,
         "signals_outdir": str(signals_outdir) if signals_outdir is not None else None,
         "signal_dir_order": signal_dir_order,
@@ -497,37 +401,8 @@ def grid_search_f1(
         "score_array": score_array,
         "f1_array": score_array,
         "hausdorff_array": hausdorff_array,
-        "signal_generation_time_array": signal_generation_time_array,
-        "change_point_detection_time_array": change_point_detection_time_array,
-        "metrics_time_array": metrics_time_array,
-        "signal_generation_time_per_lambda": signal_generation_time_per_lambda,
-        "change_point_detection_time_per_lambda": change_point_detection_time_per_lambda,
-        "metrics_time_per_lambda": metrics_time_per_lambda,
-        "total_signal_generation_seconds": total_signal_generation_seconds,
-        "total_change_point_detection_seconds": total_change_point_detection_seconds,
-        "total_metrics_seconds": total_metrics_seconds,
-        "cumulative_signal_generation_seconds": float(np.nansum(signal_generation_time_per_lambda)),
-        "cumulative_change_point_detection_seconds": float(np.nansum(change_point_detection_time_per_lambda)),
-        "cumulative_metrics_seconds": float(np.nansum(metrics_time_per_lambda)),
-        "average_signal_generation_seconds_per_lambda_job": nanmean_or_nan(signal_generation_time_per_lambda),
-        "average_change_point_detection_seconds_per_lambda_job": nanmean_or_nan(change_point_detection_time_per_lambda),
-        "average_metrics_seconds_per_lambda_job": nanmean_or_nan(metrics_time_per_lambda),
-        "average_signal_generation_seconds_per_parameter_pair": nanmean_or_nan(signal_generation_time_array),
-        "average_change_point_detection_seconds_per_parameter_pair": nanmean_or_nan(change_point_detection_time_array),
-        "average_metrics_seconds_per_parameter_pair": nanmean_or_nan(metrics_time_array),
-        "average_compute_signals_for_lambda_timed_seconds": (
-            float(np.nansum(signal_generation_time_per_lambda)) / num_compute_signals_calls
-            if num_compute_signals_calls > 0 else math.nan
-        ),
-        "average_detect_change_points_from_signal_seconds": (
-            float(np.nansum(change_point_detection_time_per_lambda)) / num_pair_evaluations
-            if num_pair_evaluations > 0 else math.nan
-        ),
-        "average_metrics_step_seconds": (
-            float(np.nansum(metrics_time_per_lambda)) / num_pair_evaluations
-            if num_pair_evaluations > 0 else math.nan
-        ),
-        "timed_wall_clock_seconds": timed_wall_clock_seconds,
+        "signal_generation_phase_seconds": signal_generation_phase_seconds,
+        "detection_metrics_phase_seconds": detection_metrics_phase_seconds,
         "lambda_results": lambda_results,
         "results_by_lambda": results_by_lambda,
         "best_index": best_index,
@@ -600,22 +475,8 @@ if __name__ == "__main__":
     print("Best mean F1:", summary["best_f1"])
     print("Best mean Hausdorff:", summary["best_hausdorff"])
     print("Total runtime:", summary["elapsed_seconds"])
-    print("Whole-run signal-generation wall time:", summary["total_signal_generation_seconds"])
-    print("Whole-run change-point detection wall time:", summary["total_change_point_detection_seconds"])
-    print("Whole-run metrics wall time:", summary["total_metrics_seconds"])
-    print("Average signal-generation time per lambda job:", summary["average_signal_generation_seconds_per_lambda_job"])
-    print("Average change-point detection time per lambda job:", summary["average_change_point_detection_seconds_per_lambda_job"])
-    print("Average metrics time per lambda job:", summary["average_metrics_seconds_per_lambda_job"])
-    print("Average compute_signals_for_lambda_timed call:", summary["average_compute_signals_for_lambda_timed_seconds"])
-    print("Average detect_change_points_from_signal call:", summary["average_detect_change_points_from_signal_seconds"])
-    print("Average metrics step call:", summary["average_metrics_step_seconds"])
-    print("Average signal-generation time per parameter pair:", summary["average_signal_generation_seconds_per_parameter_pair"])
-    print("Average change-point detection time per parameter pair:", summary["average_change_point_detection_seconds_per_parameter_pair"])
-    print("Average metrics time per parameter pair:", summary["average_metrics_seconds_per_parameter_pair"])
+    print("Signal generation phase runtime:", summary["signal_generation_phase_seconds"])
+    print("Detection and metrics phase runtime:", summary["detection_metrics_phase_seconds"])
     print("Signals saved:", summary["save_signals"])
     print("Signals output directory:", summary["signals_outdir"])
     print("Signals directory order:", summary["signal_dir_order"])
-    if summary["best_index"] is not None:
-        print("Signal generation time at best params (all samples):", summary["signal_generation_time_array"][summary["best_index"]])
-        print("Change-point detection time at best params (all samples):", summary["change_point_detection_time_array"][summary["best_index"]])
-        print("Metrics computation time at best params (all samples):", summary["metrics_time_array"][summary["best_index"]])
