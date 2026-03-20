@@ -6,11 +6,11 @@ import auxiliary_functions
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 
-with open('merge_merge.pkl', 'rb') as handle:
+with open('data/merge_merge.pkl', 'rb') as handle:
     merge_merge = pickle.load(handle)
-with open('block1activity.pkl', 'rb') as handle:
+with open('data/block1activity.pkl', 'rb') as handle:
     block1activity = pickle.load(handle)[0]['tnet']
-with open('block2activities.pkl', 'rb') as handle:
+with open('data/block2activities.pkl', 'rb') as handle:
     block2activities = pickle.load(handle)[0]['tnet']
 
 

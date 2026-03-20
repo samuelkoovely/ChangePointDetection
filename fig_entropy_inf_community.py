@@ -17,9 +17,9 @@ START_TIME = time.perf_counter()
 ENTROPY_DIR = "//scratch/tmp/180/skoove/primaryschoolnet_rw/conditional_S_selected_hr"
 CLUSTER_DIR = "//scratch/tmp/180/skoove/primaryschoolnet_rw"
 NETWORK_PATH = (
-    "/home/b/skoove/compute/entropy/paper_data/socio_pat_primary_school/primaryschoolnet"
+    "data/primaryschoolnet"
 )
-CSV_PATH = "/home/b/skoove/compute/entropy/paper_data/socio_pat_primary_school/primaryschool.csv"
+CSV_PATH = "data/primaryschool.csv"
 
 SELECTED_LAMBDAS = np.logspace(-5, 0, 10)
 LAMBDAS_GROWING = np.logspace(-5, 0, 200)

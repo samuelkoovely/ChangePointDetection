@@ -2,7 +2,7 @@ import numpy as np
 import pickle
 from gridsearch_score_snapshots import CPSample, grid_search
 
-with open("block2activities_snapshots.pkl", "rb") as f:
+with open("data/block2activities_snapshots.pkl", "rb") as f:
         dataset = pickle.load(f)
 
 aggregation_window = dataset[0]['aggregation_window'] 

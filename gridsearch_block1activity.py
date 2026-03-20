@@ -1,9 +1,9 @@
 import numpy as np
 import pickle
-from gridsearch_F1score import CPSample, grid_search_f1
+from gridsearch_score import CPSample, grid_search_f1
 import math
 
-with open("block1activity.pkl", "rb") as f:
+with open("data/block1activity.pkl", "rb") as f:
         dataset = pickle.load(f)
 
 lambdas = np.logspace(-1, 1, 2)

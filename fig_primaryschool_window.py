@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import auxiliary_functions
 
 
-net_rw = ContTempNetwork.load('/home/b/skoove/compute/entropy/paper_data/socio_pat_primary_school/primaryschoolnet',
+net_rw = ContTempNetwork.load('./data/primaryschoolnet',
                               attributes_list=['node_to_label_dict',
                       'events_table',
                       'times',

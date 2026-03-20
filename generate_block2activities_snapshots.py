@@ -3,7 +3,7 @@ import numpy as np
 from TemporalNetwork import ContTempNetwork
 
 
-with open('block2activities.pkl', 'rb') as handle:
+with open('data/block2activities.pkl', 'rb') as handle:
     dataset = pickle.load(handle)
 
 
@@ -51,4 +51,4 @@ for data_index in range(len(dataset)):
     sanpshots_dataset.append(tnet)
 
 
-pickle.dump(sanpshots_dataset, open('block2activities_snapshots.pkl', 'wb'))
+pickle.dump(sanpshots_dataset, open('data/block2activities_snapshots.pkl', 'wb'))

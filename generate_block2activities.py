@@ -45,4 +45,4 @@ for i in range(5):
 
     tnets.append({'tnet': tnet_trimmed, 'bkp': t_split - t_0, 'starts': tnet_trimmed.events_table['starting_times'], 'ends': tnet_trimmed.events_table['ending_times']})
 
-pickle.dump(tnets, open('block2activities.pkl', 'wb'))
+pickle.dump(tnets, open('data/block2activities.pkl', 'wb'))
