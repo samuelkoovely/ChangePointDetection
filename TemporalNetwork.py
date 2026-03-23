@@ -33,6 +33,7 @@ import gzip
 from SparseStochMat import sparse_stoch_mat, inplace_csr_row_normalize
 
 from parallel_expm import compute_subspace_expm_parallel
+from matrix_segment_tree import OrderedMatrixProductSegmentTree
 
 from functools import partial
 
@@ -1105,6 +1106,21 @@ class ContTempNetwork(object):
         #k = int(np.where(self.times == t)[0])
         
         return t, k
+
+    def _get_window_ends_vectorized(self, window, n_windows=None):
+        """Vectorized computation of inclusive window-end indices."""
+        if not hasattr(self, '_times_array'):
+            self._times_array = np.asarray(self.times, dtype=np.float64)
+
+        times_arr = self._times_array
+        if n_windows is None:
+            n_windows = int(np.searchsorted(times_arr, times_arr[-1] - window,
+                                            side='left'))
+
+        target_times = times_arr[:n_windows] + window
+        window_ends = np.searchsorted(times_arr, target_times, side='right') - 1
+        np.clip(window_ends, 0, len(times_arr) - 1, out=window_ends)
+        return window_ends.astype(np.int64)
         
             
     def compute_laplacian_matrices(self, t_start=None,
@@ -2019,6 +2035,114 @@ class ContTempNetwork(object):
                 on_window_matrix(k, Tk_window)
 
             # Optional storage (old behavior)
+            if save_intermediate:
+                self.window_T[lamda].append(Tk_window)
+
+        if verbose:
+            print('PID ', os.getpid(), ' : ', f'finished in {time.time() - t0:.2f}s')
+        return k_used
+
+    def compute_transition_matrices_sliding_timewindow_segment_tree(self, lamda=None,
+                                                    verbose=False,
+                                                    save_intermediate=True,
+                                                    reverse_time=False,
+                                                    force_csr=False,
+                                                    tol=None,
+                                                    window_timelength=None,
+                                                    on_window_matrix=None,
+                                                    k_samples=None,
+                                                    sample_fraction=None,
+                                                    num_samples=None,
+                                                    sample_by_time=True):
+        """Compute sliding-window transition matrices using a segment tree.
+
+        This is a higher-memory alternative to
+        `compute_transition_matrices_sliding_timewindow`. It builds a segment tree
+        over `inter_T` (or `inter_T_lin`) once, then answers each window query
+        via an ordered range-product query.
+        """
+
+        if not hasattr(self, 'inter_T') or (lamda not in self.inter_T.keys()):
+            if not hasattr(self, 'inter_T_lin') or (lamda not in self.inter_T_lin.keys()):
+                raise Exception("Compute inter_T or inter_T_lin first.")
+            using_lin_inter_T = True
+        else:
+            using_lin_inter_T = False
+
+        if window_timelength is None or window_timelength <= 0:
+            raise ValueError("window_timelength must be a positive number.")
+        if reverse_time:
+            raise Exception("Not implemented yet.")
+        if tol is not None:
+            raise ValueError("tol is not supported by the segment-tree method.")
+
+        considered_times = self.times[self.times < self.times[-1] - window_timelength]
+        M = len(considered_times)
+
+        k_used = None
+        if k_samples is not None:
+            k_used = np.asarray(list(k_samples), dtype=int)
+        elif (num_samples is not None) or (sample_fraction is not None):
+            if num_samples is None:
+                sf = float(sample_fraction)
+                if sf <= 0:
+                    raise ValueError("sample_fraction must be > 0")
+                if sf > 1:
+                    sf = 1.0
+                num_samples = int(np.ceil(sf * M))
+            else:
+                num_samples = int(num_samples)
+
+            if num_samples <= 0:
+                raise ValueError("num_samples must be > 0")
+            if num_samples > M:
+                num_samples = M
+
+            if sample_by_time:
+                t0_s = float(self.times[0])
+                tmax_s = float(self.times[-1] - window_timelength)
+                t_targets = np.linspace(t0_s, tmax_s, num_samples)
+                k_used = np.searchsorted(considered_times, t_targets, side='left')
+                k_used = np.clip(k_used, 0, M - 1)
+            else:
+                k_used = np.round(np.linspace(0, M - 1, num_samples)).astype(int)
+
+            k_used = np.unique(k_used)
+
+        if k_used is None:
+            k_iter = range(M)
+        else:
+            k_iter = k_used
+
+        if save_intermediate:
+            if not hasattr(self, 'window_T'):
+                self.window_T = dict()
+            if lamda not in self.window_T:
+                self.window_T[lamda] = []
+
+        if using_lin_inter_T:
+            source_mats = self.inter_T_lin[lamda][10]
+        else:
+            source_mats = self.inter_T[lamda]
+
+        if verbose:
+            print('PID ', os.getpid(), ' : ',
+                  'Computing sliding window transition matrices with segment tree')
+
+        t0 = time.time()
+        tree = OrderedMatrixProductSegmentTree(source_mats, force_csr=force_csr)
+        window_ends = self._get_window_ends_vectorized(window_timelength, n_windows=M)
+
+        for idx, k in enumerate(k_iter):
+            if verbose and idx % 1000 == 0:
+                print('PID ', os.getpid(), ' : ', idx, ' over ', len(k_iter))
+                print(f'PID {os.getpid()} : {time.time() - t0:.2f}s')
+
+            Tk_window = tree.query(int(k), int(window_ends[k]))
+
+            if on_window_matrix is not None:
+                on_window_matrix(int(k), Tk_window)
+
             if save_intermediate:
                 self.window_T[lamda].append(Tk_window)
 
