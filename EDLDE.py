@@ -64,16 +64,21 @@ def activity_EDLDE(starting_times: Sequence[Any],
     return change_times, counts_after
 
 def make_step_block_probs(
-    deltat1,
+    deltat1=None,
     n_groups=27, n_per_group=3,
     basis_num_communities=3,
     powers_num_communities=[3, 2, 1],
     list_p_within_community=None,
+    t_start=0,
+    t_end=None,
+    breakpoints=None,
 ):
     """
     Returns a function that generates the block probability matrix as a function of time.
 
     - You can include 0 in powers_num_communities; 0 -> single community.
+    - If `breakpoints` is provided, it should contain the internal stage boundaries.
+      Otherwise the stages are split evenly between `t_start` and `t_end`.
     """
 
     if list_p_within_community is None:
@@ -134,13 +139,32 @@ def make_step_block_probs(
     for num_communities, p_within_community in zip(list_num_communities, list_p_within_community):
         stage_matrices.append(generate_block_matrix(num_communities, p_within_community))
 
-    def block_mod_func(t):
-        total_stages = len(stage_matrices)
-        stage_duration = deltat1
+    total_stages = len(stage_matrices)
+    if breakpoints is None:
+        if t_end is not None:
+            stage_boundaries = np.linspace(t_start, t_end, total_stages + 1, dtype=float)
+        elif deltat1 is not None:
+            stage_boundaries = np.asarray(
+                [t_start + stage_index * deltat1 for stage_index in range(total_stages + 1)],
+                dtype=float)
+        else:
+            raise ValueError("Either t_end or deltat1 must be provided when breakpoints is None.")
+    else:
+        if t_end is None:
+            raise ValueError("t_end must be provided when breakpoints are specified.")
+        if len(breakpoints) != total_stages - 1:
+            raise ValueError(
+                "breakpoints must contain exactly len(powers_num_communities) - 1 values.")
+        stage_boundaries = np.asarray([t_start, *breakpoints, t_end], dtype=float)
+        if not np.all(np.diff(stage_boundaries) > 0):
+            raise ValueError("breakpoints must be strictly increasing and lie within (t_start, t_end).")
 
-        for stage_index in range(total_stages):
-            if stage_index * stage_duration <= t < (stage_index + 1) * stage_duration:
-                return stage_matrices[stage_index]
+    def block_mod_func(t):
+        if stage_boundaries[0] <= t < stage_boundaries[-1]:
+            stage_index = np.searchsorted(stage_boundaries, t, side="right") - 1
+            return stage_matrices[stage_index]
+        if np.isclose(t, stage_boundaries[-1]):
+            return stage_matrices[-1]
 
         print("Warning: t is out of bounds. Returning identity matrix.")
         n_nodes = n_groups * n_per_group
@@ -156,6 +180,7 @@ def generate_smooth_SBM(
     basis_num_communities=3,
     powers_num_communities=[3, 2, 1],
     list_p_within_community=None,
+    breakpoints=None,
     number_of_events=None, starting_times=None, ending_times=None, seed=271):
 
     # Create a dedicated RNG for this function call
@@ -177,9 +202,11 @@ def generate_smooth_SBM(
     block_mod_func = make_step_block_probs(
         deltat1=(t_end - t_start) / len(powers_num_communities),
         n_groups=n_groups, n_per_group=n_per_group,
+        t_start=t_start, t_end=t_end,
         basis_num_communities=basis_num_communities,
         powers_num_communities=powers_num_communities,
-        list_p_within_community=list_p_within_community)
+        list_p_within_community=list_p_within_community,
+        breakpoints=breakpoints)
 
     target_nodes = []
     for i, source in enumerate(source_nodes):

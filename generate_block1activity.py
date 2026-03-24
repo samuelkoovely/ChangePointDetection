@@ -21,7 +21,7 @@ density = 100
 
 rd.seed(34)
 for i in range(5):
-    #t_split = rd.randint(50, 150)
+    t_split = rd.randint(50, 150)
     n1, s1, e1 = EDLDE.EDLDE(
         density=density, inter_tau=inter_tau, t_start=t_start, t_end=t_end, seed=1415+i)
 
@@ -29,10 +29,11 @@ for i in range(5):
                           n_per_group = n_per_group, n_groups =n_groups,
                           t_start = t_start, t_end =t_end,
                           basis_num_communities = basis_num_communities, powers_num_communities = powers_num_communities, list_p_within_community = list_p_within_community,
+                          breakpoints = [t_split],
                           number_of_events = n1, starting_times=s1, ending_times=e1, seed=271+i)
 
     tnet_trimmed, t_0 = EDLDE.trim_temporal_network_head_tail(tnet, density=density, inter_tau=inter_tau, tail_start_time=t_end)
 
-    tnets.append({'tnet': tnet_trimmed, 'bkp': (t_end - t_start) / 2 - t_0, 'starts': tnet_trimmed.events_table['starting_times'], 'ends': tnet_trimmed.events_table['ending_times']}) 
+    tnets.append({'tnet': tnet_trimmed, 'bkp': t_split - t_0, 'starts': tnet_trimmed.events_table['starting_times'], 'ends': tnet_trimmed.events_table['ending_times']}) 
 
 pickle.dump(tnets, open('data/block1activity.pkl', 'wb'))
