@@ -1903,6 +1903,8 @@ class ContTempNetwork(object):
                                                    save_intermediate=True,
                                                    reverse_time=False,
                                                    force_csr=False,
+                                                   use_linear_inter_T=False,
+                                                   lin_t_s=10,
                                                    tol=None,
                                                    window_timelength=None,
                                                    on_window_matrix=None,
@@ -1922,11 +1924,18 @@ class ContTempNetwork(object):
         - The function returns the array of k indices actually computed (`k_used`). If no sampling was requested, return `None`.
         """
 
-        if not hasattr(self, 'inter_T') or (lamda not in self.inter_T.keys()):
-            if  not hasattr(self, 'inter_T_lin') or (lamda not in self.inter_T_lin.keys()):
+        if use_linear_inter_T:
+            if (not hasattr(self, 'inter_T_lin') or
+                    (lamda not in self.inter_T_lin.keys()) or
+                    (lin_t_s not in self.inter_T_lin[lamda].keys())):
+                raise Exception("Compute inter_T_lin first for the requested t_s.")
+            using_lin_inter_T = True
+        elif not hasattr(self, 'inter_T') or (lamda not in self.inter_T.keys()):
+            if (not hasattr(self, 'inter_T_lin') or
+                    (lamda not in self.inter_T_lin.keys()) or
+                    (lin_t_s not in self.inter_T_lin[lamda].keys())):
                 raise Exception("Compute inter_T or inter_T_lin first.")
-            else:
-                using_lin_inter_T = True
+            using_lin_inter_T = True
         else:
             using_lin_inter_T = False
         
@@ -2001,7 +2010,7 @@ class ContTempNetwork(object):
             if using_lin_inter_T == False:
                 Tk_window = self.inter_T[lamda][k]
             else:
-                Tk_window = self.inter_T_lin[lamda][10][k] #10 indicates t_s
+                Tk_window = self.inter_T_lin[lamda][lin_t_s][k]
             if force_csr and not isspmatrix_csr(Tk_window):
                 Tk_window = Tk_window.tocsr()
 
@@ -2013,7 +2022,7 @@ class ContTempNetwork(object):
                 if using_lin_inter_T == False:
                     Ti = self.inter_T[lamda][i]
                 else:
-                    Ti = self.inter_T_lin[lamda][10][i] #10 indicates t_s
+                    Ti = self.inter_T_lin[lamda][lin_t_s][i]
                 if force_csr and not isspmatrix_csr(Ti):
                     Ti = Ti.tocsr()
 
@@ -2047,6 +2056,8 @@ class ContTempNetwork(object):
                                                     save_intermediate=True,
                                                     reverse_time=False,
                                                     force_csr=False,
+                                                    use_linear_inter_T=False,
+                                                    lin_t_s=10,
                                                     tol=None,
                                                     window_timelength=None,
                                                     on_window_matrix=None,
@@ -2062,8 +2073,16 @@ class ContTempNetwork(object):
         via an ordered range-product query.
         """
 
-        if not hasattr(self, 'inter_T') or (lamda not in self.inter_T.keys()):
-            if not hasattr(self, 'inter_T_lin') or (lamda not in self.inter_T_lin.keys()):
+        if use_linear_inter_T:
+            if (not hasattr(self, 'inter_T_lin') or
+                    (lamda not in self.inter_T_lin.keys()) or
+                    (lin_t_s not in self.inter_T_lin[lamda].keys())):
+                raise Exception("Compute inter_T_lin first for the requested t_s.")
+            using_lin_inter_T = True
+        elif not hasattr(self, 'inter_T') or (lamda not in self.inter_T.keys()):
+            if (not hasattr(self, 'inter_T_lin') or
+                    (lamda not in self.inter_T_lin.keys()) or
+                    (lin_t_s not in self.inter_T_lin[lamda].keys())):
                 raise Exception("Compute inter_T or inter_T_lin first.")
             using_lin_inter_T = True
         else:
@@ -2121,7 +2140,7 @@ class ContTempNetwork(object):
                 self.window_T[lamda] = []
 
         if using_lin_inter_T:
-            source_mats = self.inter_T_lin[lamda][10]
+            source_mats = self.inter_T_lin[lamda][lin_t_s]
         else:
             source_mats = self.inter_T[lamda]
 
