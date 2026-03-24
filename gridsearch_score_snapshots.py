@@ -2,8 +2,8 @@
 Parallel grid-search over (lambda, window) for snapshot-network change-point detection.
 
 This version reuses the signal-generation helpers from `signal_generation.py`.
-The expensive lambda-dependent preprocessing is performed once per lambda worker,
-then reused across all candidate window lengths.
+Each worker owns one sample, prepares its reusable state once, then computes
+all candidate lambdas and window lengths for that sample.
 
 Compared with `gridsearch_F1score.py`, the detection step keeps change points in
 entropy-signal index space instead of mapping them back to sampled times.
@@ -24,7 +24,11 @@ import ruptures as rpt
 from joblib import Parallel, delayed
 
 from evaluation_metrics import f1_score, hausdorff_distance
-from signal_generation import compute_signals_for_lambda, save_signal_result
+from signal_generation import (
+    compute_signals_for_lambdas_prepared,
+    prepare_signal_sample,
+    save_signal_result,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -104,49 +108,92 @@ def detect_change_points_from_signal(
 # Signal generation phase
 # -----------------------------------------------------------------------------
 
-def compute_and_store_signals_for_lambda(
-    samples: Sequence[CPSample],
-    lamda: float,
+def compute_and_store_signals_for_sample(
+    sample: CPSample,
+    sample_idx: int,
+    lambdas: Sequence[float],
     windows: Sequence[float],
     sample_fraction: float = 0.1,
     p0: np.ndarray | None = None,
+    use_linear_approx: bool = False,
+    lin_t_s: int = 10,
     save_signals: bool = False,
     signals_outdir: str | Path | None = None,
+    window_backend: str = "auto",
 ) -> dict:
     """
-    Compute and store all signals associated with one lambda value.
+    Compute and optionally store all signals associated with one sample.
 
-    If requested, the generated entropy signals are also saved to disk under
-    one folder per sample. Each filename encodes both the lambda and window.
+    The worker owns one sample, prepares its reusable state once, then computes
+    all lambda/window combinations locally.
     """
+    lambdas = [float(lamda) for lamda in lambdas]
     windows = [float(w) for w in windows]
-    signals_by_window = {float(window): [] for window in windows}
-    sample_names = [sample.name for sample in samples]
 
-    for sample_idx, sample in enumerate(samples):
-        sample_signals = compute_signals_for_lambda(
-            net=sample.data,
-            lamda=lamda,
-            windows=windows,
-            sample_fraction=sample_fraction,
-            p0=p0,
-        )
-        for window in windows:
-            window_key = float(window)
-            signal_result = sample_signals[window_key]
-            signals_by_window[window_key].append(signal_result)
+    prepared = prepare_signal_sample(
+        net=sample.data,
+        windows=windows,
+        sample_fraction=sample_fraction,
+        p0=p0,
+    )
+    signals_by_lambda = compute_signals_for_lambdas_prepared(
+        prepared=prepared,
+        lambdas=lambdas,
+        use_linear_approx=use_linear_approx,
+        lin_t_s=lin_t_s,
+        window_backend=window_backend,
+    )
 
-            if save_signals and signals_outdir is not None:
-                sample_dir = sample.name if sample.name is not None else f"sample_{sample_idx}"
-                signal_outdir = Path(signals_outdir) / sample_dir
+    sample_name = sample.name if sample.name is not None else f"sample_{sample_idx}"
+    if save_signals and signals_outdir is not None:
+        signal_outdir = Path(signals_outdir) / sample_name
+        for lamda in lambdas:
+            for window in windows:
+                signal_result = signals_by_lambda[lamda][window]
                 save_signal_result(signal_result, signal_outdir)
 
     return {
-        "lamda": float(lamda),
-        "windows": np.asarray(windows, dtype=float),
-        "signals_by_window": signals_by_window,
-        "sample_names": sample_names,
+        "sample_idx": int(sample_idx),
+        "sample_name": sample_name,
+        "signals_by_lambda": signals_by_lambda,
     }
+
+
+def reorganize_sample_signal_results_by_lambda(
+    sample_signal_results: Sequence[dict],
+    samples: Sequence[CPSample],
+    lambdas: Sequence[float],
+    windows: Sequence[float],
+) -> list[dict]:
+    """
+    Transpose sample-owned signal bundles into lambda-owned bundles.
+    """
+    ordered_results = sorted(sample_signal_results, key=lambda item: item["sample_idx"])
+    lambdas = [float(lamda) for lamda in lambdas]
+    windows = [float(window) for window in windows]
+    sample_names = [
+        sample.name if sample.name is not None else f"sample_{idx}"
+        for idx, sample in enumerate(samples)
+    ]
+
+    lambda_signal_results: list[dict] = []
+    for lamda in lambdas:
+        signals_by_window = {window: [] for window in windows}
+        for sample_result in ordered_results:
+            sample_lambda_results = sample_result["signals_by_lambda"][lamda]
+            for window in windows:
+                signals_by_window[window].append(sample_lambda_results[window])
+
+        lambda_signal_results.append(
+            {
+                "lamda": float(lamda),
+                "windows": np.asarray(windows, dtype=float),
+                "signals_by_window": signals_by_window,
+                "sample_names": sample_names,
+            }
+        )
+
+    return lambda_signal_results
 
 
 # -----------------------------------------------------------------------------
@@ -248,15 +295,19 @@ def grid_search(
     sample_fraction: float = 0.1,
     kernel: str = "linear",
     p0: np.ndarray | None = None,
+    use_linear_approx: bool = False,
+    lin_t_s: int = 10,
     save_signals: bool = False,
     signals_outdir: str | Path | None = None,
     selection_metric: str = "f1",
+    window_backend: str = "auto",
 ) -> dict:
     """
     Run a parallel grid-search over all (lambda, window) pairs.
 
-    Parallelization is done over lambda values so that the expensive
-    lambda-dependent preprocessing can be reused across all window values.
+    Parallelization is done over samples so that each worker owns its network,
+    prepares sample-level state once, then reuses it across all lambdas and
+    window lengths.
 
     Optionally, the generated entropy signals can be saved to disk during the
     grid-search, with one folder per sample and filenames that encode both the
@@ -276,17 +327,27 @@ def grid_search(
 
     t0 = time.time()
     t_signal_phase_start = time.time()
-    lambda_signal_results = Parallel(n_jobs=n_jobs, backend=backend, verbose=verbose)(
-        delayed(compute_and_store_signals_for_lambda)(
-            samples=samples,
-            lamda=float(lamda),
+    sample_signal_results = Parallel(n_jobs=n_jobs, backend=backend, verbose=verbose)(
+        delayed(compute_and_store_signals_for_sample)(
+            sample=sample,
+            sample_idx=sample_idx,
+            lambdas=lambdas,
             windows=windows,
             sample_fraction=sample_fraction,
             p0=p0,
+            use_linear_approx=use_linear_approx,
+            lin_t_s=lin_t_s,
             save_signals=save_signals,
             signals_outdir=signals_outdir,
+            window_backend=window_backend,
         )
-        for lamda in lambdas
+        for sample_idx, sample in enumerate(samples)
+    )
+    lambda_signal_results = reorganize_sample_signal_results_by_lambda(
+        sample_signal_results=sample_signal_results,
+        samples=samples,
+        lambdas=lambdas,
+        windows=windows,
     )
     signal_generation_phase_seconds = time.time() - t_signal_phase_start
 
@@ -321,6 +382,7 @@ def grid_search(
 
     num_samples = len(samples)
     num_lambda_jobs = len(lambdas)
+    num_sample_jobs = len(samples)
     num_parameter_pairs = len(lambdas) * len(windows)
 
     if selection_metric == "f1":
@@ -373,8 +435,13 @@ def grid_search(
         "margin": float(margin),
         "sample_fraction": float(sample_fraction),
         "kernel": kernel,
+        "use_linear_approx": bool(use_linear_approx),
+        "lin_t_s": int(lin_t_s),
+        "window_backend": window_backend,
+        "parallel_axis": "sample",
         "num_samples": num_samples,
         "num_lambda_jobs": num_lambda_jobs,
+        "num_sample_jobs": num_sample_jobs,
         "num_parameter_pairs": num_parameter_pairs,
         "save_signals": save_signals,
         "signals_outdir": str(signals_outdir) if signals_outdir is not None else None,
