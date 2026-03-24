@@ -17,11 +17,7 @@ from signal_generation import (
 )
 
 
-PRIMARY_SCHOOL_PATH = (
-    "/home/b/skoove/Desktop/entropy/paper_data/socio_pat_primary_school/"
-    "primaryschoolnet"
-)
-FALLBACK_PRIMARY_SCHOOL_PATH = "./data/primaryschoolnet"
+PRIMARY_SCHOOL_PATH = "./data/primaryschoolnet"
 OUTPUT_BASE = Path("./gridsearch_results/primaryschool_day1")
 
 DAY1_STOP_INDEX = 1556
@@ -35,21 +31,6 @@ BACKEND = "loky"
 N_JOBS = min(4, len(LAMBDAS), os.cpu_count() or 1)
 
 
-def resolve_network_path(network_path: str | Path = PRIMARY_SCHOOL_PATH) -> str:
-    """
-    Resolve the primary-school network path, falling back to the local repo copy.
-    """
-    requested = Path(network_path)
-    if Path(f"{requested}.pickle").exists():
-        return str(requested)
-
-    fallback = Path(FALLBACK_PRIMARY_SCHOOL_PATH)
-    if Path(f"{fallback}.pickle").exists():
-        return str(fallback)
-
-    return str(requested)
-
-
 def load_primary_school_day1_network(
     network_path: str | Path = PRIMARY_SCHOOL_PATH,
     day1_stop_index: int = DAY1_STOP_INDEX,
@@ -61,7 +42,7 @@ def load_primary_school_day1_network(
     The resulting day-1 network keeps the full node set from the original
     dataset, even if a few nodes only appear later.
     """
-    resolved_path = resolve_network_path(network_path)
+    resolved_path = str(network_path)
     full_net = ContTempNetwork.load(
         resolved_path,
         matrices_list=[],
@@ -271,7 +252,7 @@ def save_metadata(
 
 
 def main() -> None:
-    network_path = resolve_network_path(PRIMARY_SCHOOL_PATH)
+    network_path = PRIMARY_SCHOOL_PATH
     day1_net, day1_stop_time = load_primary_school_day1_network(network_path)
     prepared = prepare_full_window_sample(day1_net, windows_seconds=WINDOWS_SECONDS)
 
