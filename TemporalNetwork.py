@@ -1204,6 +1204,7 @@ class ContTempNetwork(object):
             self._k_stop_laplacians = k
                                     
         t0 = time.time()
+        self._laplacian_random_walk = bool(random_walk)
 
         if random_walk is True:
             if self._k_start_laplacians > 0:
@@ -1567,8 +1568,32 @@ class ContTempNetwork(object):
         
         I = eye(self.num_nodes,
                 dtype=np.float64, format='csr')
+
+        if not hasattr(self, 'laplacians'):
+            self.compute_laplacian_matrices(t_start=t_start,
+                                            t_stop=t_stop,
+                                            verbose=verbose)
+
+        if not hasattr(self, '_laplacian_random_walk'):
+            raise ValueError(
+                "Linear approximation requires Laplacians computed with "
+                "random_walk=True. Recompute Laplacians before calling "
+                "compute_lin_inter_transition_matrices()."
+            )
+        if not self._laplacian_random_walk:
+            raise ValueError(
+                "Linear approximation is only supported for random-walk "
+                "Laplacians (random_walk=True). The current Laplacians were "
+                "computed with random_walk=False."
+            )
+
+        need_stationary_trans = (
+            not hasattr(self, '_stationary_trans')
+            or len(self._stationary_trans) != len(self.laplacians)
+            or getattr(self, '_stationary_trans_use_sparse_stoch', None) != bool(use_sparse_stoch)
+        )
             
-        if not hasattr(self, '_stationary_trans'):
+        if need_stationary_trans:
             self._compute_stationary_transition(t_start=t_start, t_stop=t_stop,
                                             verbose=verbose,
                                             use_sparse_stoch=use_sparse_stoch)
@@ -2410,6 +2435,18 @@ class ContTempNetwork(object):
             self.compute_laplacian_matrices(t_start=t_start,
                                             t_stop=t_stop,
                                             verbose=verbose)
+        if not hasattr(self, '_laplacian_random_walk'):
+            raise ValueError(
+                "Linear approximation requires Laplacians computed with "
+                "random_walk=True. Recompute Laplacians before computing "
+                "stationary transitions."
+            )
+        if not self._laplacian_random_walk:
+            raise ValueError(
+                "Linear approximation is only supported for random-walk "
+                "Laplacians (random_walk=True). The current Laplacians were "
+                "computed with random_walk=False."
+            )
         if verbose:
             print('PID ', os.getpid(), ' : ','Computing stationary transition matrices')  
                 
@@ -2438,6 +2475,7 @@ class ContTempNetwork(object):
         t_end = time.time()-t0
         
         self._compute_times['_stationary_trans'] = t_end
+        self._stationary_trans_use_sparse_stoch = bool(use_sparse_stoch)
         
         if verbose:
             print('PID ', os.getpid(), ' : ','Stationary transition matrices computation took {0}s'.format(t_end))
@@ -2682,8 +2720,12 @@ def compute_stationary_transition(T):
     for row in range(num_nodes):
         cmp = comp_labels[row]
         cmp_degs = degs[cmp_to_indices[cmp]]
-        data[data_ind:data_ind+comp_sizes[cmp]] = \
-                                                cmp_degs/cmp_degs.sum()
+        cmp_deg_sum = cmp_degs.sum()
+        if cmp_deg_sum > 0:
+            data[data_ind:data_ind+comp_sizes[cmp]] = cmp_degs / cmp_deg_sum
+        else:
+            # Fallback for structurally empty components.
+            data[data_ind:data_ind+comp_sizes[cmp]] = 1.0 / comp_sizes[cmp]
         indices[data_ind:data_ind+comp_sizes[cmp]] = \
                         cmp_to_indices[cmp]
         indptr[row] = data_ind
