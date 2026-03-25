@@ -7,7 +7,7 @@ with open('data/block1activity.pkl', 'rb') as handle:
     dataset = pickle.load(handle)
 
 
-aggregation_window = 10 
+aggregation_window = 4
 sanpshots_dataset = []
 
 for data_index in range(len(dataset)):
