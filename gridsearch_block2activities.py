@@ -2,7 +2,7 @@ import numpy as np
 import pickle
 from gridsearch_score import CPSample, grid_search
 
-with open("data/block1activity.pkl", "rb") as f:
+with open("data/block2activities.pkl", "rb") as f:
     dataset = pickle.load(f)
 
 lambdas = np.logspace(-5, 0, 10)
@@ -29,11 +29,11 @@ summary = grid_search(
     windows=windows,
     margin=margin,
     n_jobs=n_jobs,
-    outdir="./gridsearch_results/block1activity",
-    sample_fraction=1.0,
+    outdir="./gridsearch_results/block2activities",
+    sample_fraction=0.0001,
     kernel="linear",
     save_signals=True,
-    signals_outdir="./gridsearch_results/block1activity/signals",
+    signals_outdir="./gridsearch_results/block2activities/signals",
     selection_metric="hausdorff",
 )
 

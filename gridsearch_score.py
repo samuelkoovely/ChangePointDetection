@@ -1,9 +1,12 @@
 """
-Parallel grid-search over (lambda, window) using the F1-score for change-point detection.
+Parallel grid-search over (lambda, window) for change-point detection.
 
-This version uses the reusable signal-generation helpers from `signal_generation.py`.
+This version reuses the signal-generation helpers from `signal_generation.py`.
 Each worker owns one sample, prepares its reusable state once, then computes
 all candidate lambdas and window lengths for that sample.
+
+Unlike `gridsearch_score_snapshots.py`, the detection step maps breakpoint
+indices back to sampled times before evaluation.
 """
 
 from __future__ import annotations
@@ -284,7 +287,7 @@ def evaluate_precomputed_lambda_signals(
 # Grid-search core
 # -----------------------------------------------------------------------------
 
-def grid_search_f1(
+def grid_search(
     samples: Sequence[CPSample],
     lambdas: Sequence[float],
     windows: Sequence[float],
@@ -467,10 +470,13 @@ def grid_search_f1(
     if outdir is not None:
         outdir = Path(outdir)
         outdir.mkdir(parents=True, exist_ok=True)
-        with open(outdir / "gridsearch_f1_results.pkl", "wb") as f:
+        with open(outdir / "gridsearch_results.pkl", "wb") as f:
             pickle.dump(summary, f)
 
     return summary
+
+
+grid_search_f1 = grid_search
 
 
 # -----------------------------------------------------------------------------
@@ -478,13 +484,13 @@ def grid_search_f1(
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    with open("block2activities.pkl", "rb") as f:
+    with open("data/block2activities.pkl", "rb") as f:
         dataset = pickle.load(f)
 
-    lambdas = np.logspace(-5, 0, 2)
-    windows = [1, 5]
+    lambdas = np.logspace(-5, 0, 10)
+    windows = [2.0]
     margin = 5.0
-    n_jobs = 4
+    n_jobs = 6
 
     training_samples = [
         CPSample(
@@ -499,18 +505,18 @@ if __name__ == "__main__":
     # Generated entropy signals can optionally be saved while running the
     # grid-search under:
     #     signals_outdir / sample_name / signal_lamda_xxx_window_y.pkl
-    summary = grid_search_f1(
+    summary = grid_search(
         samples=training_samples,
         lambdas=lambdas,
         windows=windows,
         margin=margin,
         n_jobs=n_jobs,
         outdir="./gridsearch_results/block2activities",
-        sample_fraction=0.01,
+        sample_fraction=1.0,
         kernel="linear",
         save_signals=True,
-        signals_outdir="./gridsearch_results/signals",
-        selection_metric="f1",
+        signals_outdir="./gridsearch_results/block2activities/signals",
+        selection_metric="hausdorff",
     )
 
     print("Number of samples:", len(training_samples))
