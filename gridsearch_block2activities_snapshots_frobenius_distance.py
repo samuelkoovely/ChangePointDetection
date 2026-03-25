@@ -1,14 +1,11 @@
 """
 Grid-search training pipeline for snapshot change-point detection using
-Laplacian spectrum similarity.
+averaged Frobenius distance.
 
-This mirrors the structure of the existing snapshot entropy grid-search:
-- precompute signals for one parameter family
+This mirrors the structure of the snapshot Laplacian grid-search:
+- precompute signals for each candidate window length
 - run ruptures on each signal
 - score predictions with F1 and Hausdorff distance
-
-Here the parameter pair is `(n_eigen, window_length)` instead of
-`(lamda, window)`.
 """
 
 from __future__ import annotations
@@ -25,34 +22,14 @@ import numpy as np
 import ruptures as rpt
 from joblib import Parallel, delayed
 
-from benchmark_methods import (
-    compute_laplacian_signatures as benchmark_compute_laplacian_signatures,
-    compute_similarity_signal_from_signatures as benchmark_compute_similarity_signal_from_signatures,
-    laplacian_spectrum_similarity as benchmark_laplacian_spectrum_similarity,
-)
+from benchmark_methods import avg_frobenius_distance
 from evaluation_metrics import f1_score, hausdorff_distance
-
-
-# -----------------------------------------------------------------------------
-# Data structure
-# -----------------------------------------------------------------------------
 
 
 @dataclass
 class CPSample:
     """
     One training example for the grid-search.
-
-    Attributes
-    ----------
-    data:
-        Input temporal network used to generate the signal.
-    true_change_points:
-        Ground-truth change-point indices in snapshot space.
-    n_bkps:
-        Number of breakpoints to predict with ruptures.
-    name:
-        Optional identifier, useful for debugging / storing outputs.
     """
 
     data: Any
@@ -61,88 +38,15 @@ class CPSample:
     name: str | None = None
 
 
-# -----------------------------------------------------------------------------
-# Signal generation helpers
-# -----------------------------------------------------------------------------
-
-
-def compute_laplacian_signatures(
-    data: Any,
-    n_eigen: int,
-    normalize: bool = False,
-) -> np.ndarray:
-    """
-    Compute the normalized Laplacian signatures for every snapshot using the
-    shared benchmark implementation.
-    """
-
-    return benchmark_compute_laplacian_signatures(
-        data=data,
-        n_eigen=n_eigen,
-        normalize=normalize,
-    )
-
-
-def compute_similarity_signal_from_signatures(
-    laplacian_signatures: np.ndarray,
-    window_length: int,
-    n_eigen: int,
-) -> dict[str, Any]:
-    """
-    Compute the Laplacian similarity signal from precomputed signatures using
-    the shared benchmark implementation.
-    """
-
-    return benchmark_compute_similarity_signal_from_signatures(
-        laplacian_signatures=laplacian_signatures,
-        window_length=window_length,
-        n_eigen=n_eigen,
-    )
-
-
-def laplacian_spectrum_similarity(
-    data: Any,
-    window_length: int,
-    normalize: bool = False,
-    n_eigen: int = 6,
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Compute the Laplacian anomaly-detection statistic of Huang et al. (2020).
-
-    Returns
-    -------
-    signal:
-        Similarity score for each valid snapshot.
-    snapshot_indices:
-        Snapshot indices corresponding to the entries of `signal`.
-    """
-
-    return benchmark_laplacian_spectrum_similarity(
-        data=data,
-        window_length=window_length,
-        normalize=normalize,
-        n_eigen=n_eigen,
-    )
-
-
-# -----------------------------------------------------------------------------
-# Optional persistence helpers
-# -----------------------------------------------------------------------------
-
-
 def get_signal_result_filename(
-    n_eigen: int,
     window_length: int,
     suffix: str = ".pkl",
 ) -> str:
     """
-    Return the canonical filename for one saved Laplacian-similarity signal.
+    Return the canonical filename for one saved Frobenius-distance signal.
     """
 
-    return (
-        f"signal_n_eigen_{int(n_eigen)}"
-        f"_window_length_{int(window_length)}{suffix}"
-    )
+    return f"signal_window_length_{int(window_length)}{suffix}"
 
 
 def save_signal_result(result: dict[str, Any], outdir: str | Path) -> Path:
@@ -154,18 +58,12 @@ def save_signal_result(result: dict[str, Any], outdir: str | Path) -> Path:
     outdir.mkdir(parents=True, exist_ok=True)
 
     outfile = outdir / get_signal_result_filename(
-        n_eigen=int(result["n_eigen"]),
         window_length=int(result["window_length"]),
     )
     with open(outfile, "wb") as f:
         pickle.dump(result, f)
 
     return outfile
-
-
-# -----------------------------------------------------------------------------
-# Detection helper
-# -----------------------------------------------------------------------------
 
 
 def detect_change_points_from_signal(
@@ -211,82 +109,84 @@ def detect_change_points_from_signal(
     breakpoint_indices = breakpoint_indices[
         (breakpoint_indices >= 0) & (breakpoint_indices < len(snapshot_indices))
     ]
-
     if breakpoint_indices.size == 0:
         return []
 
     return snapshot_indices[breakpoint_indices].tolist()
 
 
-# -----------------------------------------------------------------------------
-# Signal generation phase
-# -----------------------------------------------------------------------------
-
-
-def compute_and_store_signals_for_n_eigen(
-    samples: Sequence[CPSample],
-    n_eigen: int,
+def compute_and_store_signals_for_sample(
+    sample: CPSample,
+    sample_idx: int,
     window_lengths: Sequence[int],
-    normalize: bool = False,
     save_signals: bool = False,
     signals_outdir: str | Path | None = None,
 ) -> dict[str, Any]:
     """
-    Compute and optionally store all signals associated with one `n_eigen`.
+    Compute and optionally store all Frobenius-distance signals for one sample.
     """
 
-    n_eigen = int(n_eigen)
     window_lengths = [int(window_length) for window_length in window_lengths]
-    signals_by_window = {int(window_length): [] for window_length in window_lengths}
-    sample_names = [sample.name for sample in samples]
+    signals_by_window: dict[int, dict[str, Any]] = {}
 
-    for sample_idx, sample in enumerate(samples):
-        laplacian_signatures = compute_laplacian_signatures(
-            data=sample.data,
-            n_eigen=n_eigen,
-            normalize=normalize,
+    sample_name = sample.name if sample.name is not None else f"sample_{sample_idx}"
+    for window_length in window_lengths:
+        signal, snapshot_indices = avg_frobenius_distance(
+            sample.data,
+            window_length=window_length,
         )
+        signal_result = {
+            "window_length": window_length,
+            "signal": np.asarray(signal, dtype=float),
+            "snapshot_indices": np.asarray(snapshot_indices, dtype=int),
+        }
+        signals_by_window[window_length] = signal_result
 
-        for window_length in window_lengths:
-            signal_result = compute_similarity_signal_from_signatures(
-                laplacian_signatures=laplacian_signatures,
-                window_length=window_length,
-                n_eigen=n_eigen,
-            )
-            signals_by_window[window_length].append(signal_result)
-
-            if save_signals and signals_outdir is not None:
-                sample_dir = sample.name if sample.name is not None else f"sample_{sample_idx}"
-                signal_outdir = Path(signals_outdir) / sample_dir
-                save_signal_result(signal_result, signal_outdir)
+        if save_signals and signals_outdir is not None:
+            signal_outdir = Path(signals_outdir) / sample_name
+            save_signal_result(signal_result, signal_outdir)
 
     return {
-        "n_eigen": n_eigen,
-        "window_lengths": np.asarray(window_lengths, dtype=int),
+        "sample_idx": int(sample_idx),
+        "sample_name": sample_name,
         "signals_by_window": signals_by_window,
-        "sample_names": sample_names,
     }
 
 
-# -----------------------------------------------------------------------------
-# Detection and metrics phase
-# -----------------------------------------------------------------------------
+def reorganize_sample_signal_results_by_window(
+    sample_signal_results: Sequence[dict[str, Any]],
+    window_lengths: Sequence[int],
+) -> dict[int, list[dict[str, Any]]]:
+    """
+    Transpose sample-owned signal bundles into window-owned bundles.
+    """
+
+    ordered_results = sorted(sample_signal_results, key=lambda item: item["sample_idx"])
+    window_lengths = [int(window_length) for window_length in window_lengths]
+
+    signals_by_window: dict[int, list[dict[str, Any]]] = {
+        window_length: [] for window_length in window_lengths
+    }
+    for window_length in window_lengths:
+        for sample_result in ordered_results:
+            signals_by_window[window_length].append(
+                sample_result["signals_by_window"][window_length]
+            )
+
+    return signals_by_window
 
 
-def evaluate_precomputed_n_eigen_signals(
+def evaluate_precomputed_window_signals(
     samples: Sequence[CPSample],
-    n_eigen: int,
     window_lengths: Sequence[int],
     margin: float,
     signals_by_window: dict[int, list[dict[str, Any]]],
     kernel: str = "linear",
 ) -> dict[str, Any]:
     """
-    Evaluate all candidate window lengths for one `n_eigen` using precomputed
-    signals.
+    Evaluate all candidate window lengths using precomputed signals.
     """
 
-    n_eigen = int(n_eigen)
     window_lengths = [int(window_length) for window_length in window_lengths]
 
     score_array = np.empty(len(window_lengths), dtype=float)
@@ -317,7 +217,9 @@ def evaluate_precomputed_n_eigen_signals(
                 kernel=kernel,
             )
             window_predicted_change_points.append(pred_cps)
-            window_f1_scores.append(f1_score(sample.true_change_points, pred_cps, margin))
+            window_f1_scores.append(
+                f1_score(sample.true_change_points, pred_cps, margin)
+            )
             window_hausdorff_scores.append(
                 hausdorff_distance(sample.true_change_points, pred_cps)
             )
@@ -334,7 +236,6 @@ def evaluate_precomputed_n_eigen_signals(
         )
 
     return {
-        "n_eigen": n_eigen,
         "window_lengths": np.asarray(window_lengths, dtype=int),
         "score_array": score_array,
         "per_window_f1_scores": per_window_f1_scores,
@@ -360,60 +261,48 @@ def evaluate_precomputed_n_eigen_signals(
     }
 
 
-# -----------------------------------------------------------------------------
-# Grid-search core
-# -----------------------------------------------------------------------------
-
-
-def grid_search_laplacian_similarity(
+def grid_search_frobenius_distance(
     samples: Sequence[CPSample],
     window_lengths: Sequence[int],
-    n_eigens: Sequence[int],
     margin: float,
     n_jobs: int = 1,
     backend: str = "loky",
     verbose: int = 10,
     outdir: str | Path | None = None,
     kernel: str = "linear",
-    normalize: bool = False,
     save_signals: bool = False,
     signals_outdir: str | Path | None = None,
     selection_metric: str = "f1",
 ) -> dict[str, Any]:
     """
-    Run a parallel grid-search over all `(n_eigen, window_length)` pairs.
+    Run a parallel grid-search over all candidate window lengths.
     """
 
     window_lengths = np.asarray(window_lengths, dtype=int)
-    n_eigens = np.asarray(n_eigens, dtype=int)
 
     if len(window_lengths) == 0:
         raise ValueError("window_lengths must contain at least one value.")
-    if len(n_eigens) == 0:
-        raise ValueError("n_eigens must contain at least one value.")
     if np.any(window_lengths <= 0):
         raise ValueError("All window_lengths must be strictly positive.")
-    if np.any(n_eigens <= 0):
-        raise ValueError("All n_eigens must be strictly positive.")
     if selection_metric not in {"f1", "hausdorff"}:
         raise ValueError("selection_metric must be either 'f1' or 'hausdorff'.")
 
     t0 = time.time()
     t_signal_phase_start = time.time()
     signal_tasks = [
-        delayed(compute_and_store_signals_for_n_eigen)(
-            samples=samples,
-            n_eigen=int(n_eigen),
+        delayed(compute_and_store_signals_for_sample)(
+            sample=sample,
+            sample_idx=sample_idx,
             window_lengths=window_lengths,
-            normalize=normalize,
             save_signals=save_signals,
             signals_outdir=signals_outdir,
         )
-        for n_eigen in n_eigens
+        for sample_idx, sample in enumerate(samples)
     ]
+
     backend_used = backend
     try:
-        n_eigen_signal_results = Parallel(
+        sample_signal_results = Parallel(
             n_jobs=n_jobs,
             backend=backend,
             verbose=verbose,
@@ -422,59 +311,49 @@ def grid_search_laplacian_similarity(
         if backend != "loky":
             raise
         backend_used = "threading"
-        n_eigen_signal_results = Parallel(
+        sample_signal_results = Parallel(
             n_jobs=n_jobs,
             backend=backend_used,
             verbose=verbose,
         )(signal_tasks)
+
+    signals_by_window = reorganize_sample_signal_results_by_window(
+        sample_signal_results=sample_signal_results,
+        window_lengths=window_lengths,
+    )
     signal_generation_phase_seconds = time.time() - t_signal_phase_start
 
     t_detection_phase_start = time.time()
-    n_eigen_results = [
-        evaluate_precomputed_n_eigen_signals(
-            samples=samples,
-            n_eigen=int(signal_bundle["n_eigen"]),
-            window_lengths=window_lengths,
-            margin=margin,
-            signals_by_window=signal_bundle["signals_by_window"],
-            kernel=kernel,
-        )
-        for signal_bundle in n_eigen_signal_results
-    ]
+    evaluation = evaluate_precomputed_window_signals(
+        samples=samples,
+        window_lengths=window_lengths,
+        margin=margin,
+        signals_by_window=signals_by_window,
+        kernel=kernel,
+    )
     detection_metrics_phase_seconds = time.time() - t_detection_phase_start
     elapsed = time.time() - t0
 
-    score_array = np.empty((len(n_eigens), len(window_lengths)), dtype=float)
-    score_array[:] = np.nan
-    hausdorff_array = np.empty((len(n_eigens), len(window_lengths)), dtype=float)
-    hausdorff_array[:] = np.nan
-
-    results_by_n_eigen: dict[int, dict[str, Any]] = {}
-    for i, result in enumerate(n_eigen_results):
-        score_array[i, :] = result["score_array"]
-        hausdorff_array[i, :] = np.array(
-            [
-                result["mean_hausdorff_per_window_length"][int(window_length)]
-                for window_length in window_lengths
-            ],
-            dtype=float,
-        )
-        results_by_n_eigen[int(result["n_eigen"])] = result
+    score_array = evaluation["score_array"]
+    hausdorff_array = np.array(
+        [
+            evaluation["mean_hausdorff_per_window_length"][int(window_length)]
+            for window_length in window_lengths
+        ],
+        dtype=float,
+    )
 
     if selection_metric == "f1":
         selection_array = score_array
         if np.all(np.isnan(selection_array)):
             best_index = None
-            best_n_eigen = None
             best_window_length = None
             best_score = math.nan
             best_f1 = math.nan
             best_hausdorff = math.nan
         else:
-            best_flat = int(np.nanargmax(selection_array))
-            best_index = np.unravel_index(best_flat, selection_array.shape)
-            best_n_eigen = int(n_eigens[best_index[0]])
-            best_window_length = int(window_lengths[best_index[1]])
+            best_index = int(np.nanargmax(selection_array))
+            best_window_length = int(window_lengths[best_index])
             best_score = float(selection_array[best_index])
             best_f1 = float(score_array[best_index])
             best_hausdorff = float(hausdorff_array[best_index])
@@ -482,7 +361,6 @@ def grid_search_laplacian_similarity(
         selection_array = hausdorff_array.copy()
         if np.all(np.isnan(selection_array)):
             best_index = None
-            best_n_eigen = None
             best_window_length = None
             best_score = math.nan
             best_f1 = math.nan
@@ -491,31 +369,25 @@ def grid_search_laplacian_similarity(
             selection_array[np.isnan(selection_array)] = math.inf
             if np.all(np.isinf(selection_array)):
                 best_index = None
-                best_n_eigen = None
                 best_window_length = None
                 best_score = math.nan
                 best_f1 = math.nan
                 best_hausdorff = math.nan
             else:
-                best_flat = int(np.argmin(selection_array))
-                best_index = np.unravel_index(best_flat, selection_array.shape)
-                best_n_eigen = int(n_eigens[best_index[0]])
-                best_window_length = int(window_lengths[best_index[1]])
+                best_index = int(np.argmin(selection_array))
+                best_window_length = int(window_lengths[best_index])
                 best_score = float(hausdorff_array[best_index])
                 best_f1 = float(score_array[best_index])
                 best_hausdorff = float(hausdorff_array[best_index])
 
     summary = {
         "window_lengths": window_lengths,
-        "n_eigens": n_eigens,
         "margin": float(margin),
         "kernel": kernel,
-        "normalize": bool(normalize),
         "backend_requested": backend,
         "backend_used": backend_used,
         "num_samples": len(samples),
-        "num_n_eigen_jobs": len(n_eigens),
-        "num_parameter_pairs": len(n_eigens) * len(window_lengths),
+        "num_parameter_pairs": len(window_lengths),
         "save_signals": save_signals,
         "signals_outdir": str(signals_outdir) if signals_outdir is not None else None,
         "selection_metric": selection_metric,
@@ -525,10 +397,8 @@ def grid_search_laplacian_similarity(
         "hausdorff_array": hausdorff_array,
         "signal_generation_phase_seconds": signal_generation_phase_seconds,
         "detection_metrics_phase_seconds": detection_metrics_phase_seconds,
-        "n_eigen_results": n_eigen_results,
-        "results_by_n_eigen": results_by_n_eigen,
+        "window_results": evaluation,
         "best_index": best_index,
-        "best_n_eigen": best_n_eigen,
         "best_window_length": best_window_length,
         "best_window": best_window_length,
         "best_score": best_score,
@@ -546,26 +416,15 @@ def grid_search_laplacian_similarity(
     return summary
 
 
-# -----------------------------------------------------------------------------
-# Example usage on the block2activities snapshot dataset
-# -----------------------------------------------------------------------------
-
-
 if __name__ == "__main__":
     with open("data/block2activities_snapshots.pkl", "rb") as f:
         dataset = pickle.load(f)
 
     first_net = dataset[0]["tnet"]
-    num_laplacians = max(1, len(first_net.times) - 1)
-    max_window_length = max(1, min(8, num_laplacians - 1))
-    max_n_eigen = max(1, int(first_net.num_nodes) - 1)
+    num_snapshots = max(1, len(first_net.times) - 1)
+    max_window_length = max(1, min(8, num_snapshots - 1))
 
-    # `window_length` is expressed in number of snapshots, not in time units.
     window_lengths = list(range(1, max_window_length + 1))
-    n_eigens = [k for k in [2, 4, 6, 8, 10] if k <= max_n_eigen]
-    if not n_eigens:
-        n_eigens = [1]
-
     margin = 1.0
     n_jobs = 6
 
@@ -579,28 +438,23 @@ if __name__ == "__main__":
         for i, entry in enumerate(dataset)
     ]
 
-    # One direct call on the first temporal network, matching the original demo.
     demo_window_length = min(5, max_window_length)
-    demo_n_eigen = n_eigens[min(2, len(n_eigens) - 1)]
-    demo_signal, demo_indices = laplacian_spectrum_similarity(
+    demo_signal, demo_indices = avg_frobenius_distance(
         first_net,
         window_length=demo_window_length,
-        n_eigen=demo_n_eigen,
     )
     print("Demo signal length:", len(demo_signal))
     print("Demo index range:", demo_indices[:3], "...", demo_indices[-3:])
 
-    summary = grid_search_laplacian_similarity(
+    summary = grid_search_frobenius_distance(
         samples=training_samples,
         window_lengths=window_lengths,
-        n_eigens=n_eigens,
         margin=margin,
         n_jobs=n_jobs,
-        outdir="./gridsearch_results/block2activities_snapshots_laplacians",
+        outdir="./gridsearch_results/block2activities_snapshots_frobenius",
         kernel="linear",
-        normalize=False,
         save_signals=True,
-        signals_outdir="./gridsearch_results/block2activities_snapshots_laplacians/signals",
+        signals_outdir="./gridsearch_results/block2activities_snapshots_frobenius/signals",
         selection_metric="hausdorff",
     )
 
@@ -608,7 +462,6 @@ if __name__ == "__main__":
     print("Score array shape:", summary["score_array"].shape)
     print("Backend used:", summary["backend_used"])
     print("Selection metric:", summary["selection_metric"])
-    print("Best n_eigen:", summary["best_n_eigen"])
     print("Best window_length:", summary["best_window_length"])
     print("Best selected score:", summary["best_score"])
     print("Best mean F1:", summary["best_f1"])
