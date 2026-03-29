@@ -66,6 +66,8 @@ def detect_change_points_from_signal(
     signal: np.ndarray,
     n_bkps: int,
     kernel: str = "linear",
+    stopping_rule: str = "n_bkps",
+    penalty: float | None = None,
 ) -> list[int]:
     """
     Run ruptures on a precomputed signal and return breakpoint indices.
@@ -83,11 +85,24 @@ def detect_change_points_from_signal(
             f"signal must be a 1D or 2D array-like object, got shape {signal.shape}."
         )
 
+    if stopping_rule not in {"n_bkps", "penalty"}:
+        raise ValueError("stopping_rule must be either 'n_bkps' or 'penalty'.")
+
     if signal.shape[0] == 0:
         return []
 
-    algo = rpt.KernelCPD(kernel=kernel).fit(signal)
-    breakpoint_indices = np.asarray(algo.predict(n_bkps=n_bkps), dtype=int)
+    try:
+        algo = rpt.KernelCPD(kernel=kernel).fit(signal)
+        if stopping_rule == "n_bkps":
+            if n_bkps <= 0 or signal.shape[0] <= n_bkps:
+                return []
+            breakpoint_indices = np.asarray(algo.predict(n_bkps=n_bkps), dtype=int)
+        else:
+            if penalty is None:
+                raise ValueError("penalty must be provided when stopping_rule='penalty'.")
+            breakpoint_indices = np.asarray(algo.predict(pen=float(penalty)), dtype=int)
+    except Exception:
+        return []
 
     if breakpoint_indices.size == 0:
         return []
@@ -102,6 +117,27 @@ def detect_change_points_from_signal(
         return []
 
     return breakpoint_indices.tolist()
+
+
+def extract_true_change_points(entry: dict[str, Any]) -> tuple[list[float], int]:
+    """
+    Read the canonical dataset label format into a sorted list of ground-truth
+    change points and its count.
+    """
+    if "bkps" not in entry:
+        raise KeyError("Dataset entry must contain the 'bkps' key.")
+    if "n_bkps" not in entry:
+        raise KeyError("Dataset entry must contain the 'n_bkps' key.")
+
+    true_change_points = sorted(float(change_point) for change_point in entry["bkps"])
+    n_bkps = int(entry["n_bkps"])
+    if n_bkps != len(true_change_points):
+        raise ValueError(
+            "Dataset entry has inconsistent breakpoint metadata: "
+            f"n_bkps={n_bkps}, len(bkps)={len(true_change_points)}."
+        )
+
+    return true_change_points, n_bkps
 
 
 # -----------------------------------------------------------------------------
@@ -207,6 +243,8 @@ def evaluate_precomputed_lambda_signals(
     margin: float,
     signals_by_window: dict[float, list[dict[str, Any]]],
     kernel: str = "linear",
+    stopping_rule: str = "n_bkps",
+    penalty: float | None = None,
 ) -> dict:
     """
     Evaluate all candidate windows for one lambda using precomputed signals.
@@ -239,6 +277,8 @@ def evaluate_precomputed_lambda_signals(
                 signal=signal_result["signal"],
                 n_bkps=sample.n_bkps,
                 kernel=kernel,
+                stopping_rule=stopping_rule,
+                penalty=penalty,
             )
             window_predicted_change_points.append(pred_cps)
             window_f1_scores.append(f1_score(sample.true_change_points, pred_cps, margin))
@@ -301,6 +341,8 @@ def grid_search(
     signals_outdir: str | Path | None = None,
     selection_metric: str = "f1",
     window_backend: str = "auto",
+    stopping_rule: str = "n_bkps",
+    penalty: float | None = None,
 ) -> dict:
     """
     Run a parallel grid-search over all (lambda, window) pairs.
@@ -316,6 +358,10 @@ def grid_search(
     The best parameter pair can be selected either by maximizing the F1 score
     (`selection_metric="f1"`) or by minimizing the Hausdorff distance
     (`selection_metric="hausdorff"`).
+
+    Change-point detection can either use the known number of breakpoints for
+    each sample (`stopping_rule="n_bkps"`) or let ruptures choose the number
+    of breakpoints from a fixed penalty (`stopping_rule="penalty"`).
     """
     lambdas = np.asarray(lambdas, dtype=float)
     windows = np.asarray(windows, dtype=float)
@@ -324,6 +370,12 @@ def grid_search(
         raise ValueError(
             "selection_metric must be either 'f1' or 'hausdorff'."
         )
+    if stopping_rule not in {"n_bkps", "penalty"}:
+        raise ValueError(
+            "stopping_rule must be either 'n_bkps' or 'penalty'."
+        )
+    if stopping_rule == "penalty" and penalty is None:
+        raise ValueError("penalty must be provided when stopping_rule='penalty'.")
 
     t0 = time.time()
     t_signal_phase_start = time.time()
@@ -360,6 +412,8 @@ def grid_search(
             margin=margin,
             signals_by_window=signal_bundle["signals_by_window"],
             kernel=kernel,
+            stopping_rule=stopping_rule,
+            penalty=penalty,
         )
         for signal_bundle in lambda_signal_results
     ]
@@ -438,6 +492,8 @@ def grid_search(
         "use_linear_approx": bool(use_linear_approx),
         "lin_t_s": int(lin_t_s),
         "window_backend": window_backend,
+        "stopping_rule": stopping_rule,
+        "penalty": None if penalty is None else float(penalty),
         "parallel_axis": "sample",
         "num_samples": num_samples,
         "num_lambda_jobs": num_lambda_jobs,
@@ -485,15 +541,17 @@ if __name__ == "__main__":
     margin = 5.0
     n_jobs = 6
 
-    training_samples = [
-        CPSample(
-            data=entry["tnet"],
-            true_change_points=[float(entry["bkp"])],
-            n_bkps=1,
-            name=f"sample_{i}",
+    training_samples = []
+    for i, entry in enumerate(dataset):
+        true_change_points, n_bkps = extract_true_change_points(entry)
+        training_samples.append(
+            CPSample(
+                data=entry["tnet"],
+                true_change_points=true_change_points,
+                n_bkps=n_bkps,
+                name=f"sample_{i}",
+            )
         )
-        for i, entry in enumerate(dataset)
-    ]
 
     # Generated entropy signals can optionally be saved while running the
     # grid-search under:
@@ -512,6 +570,7 @@ if __name__ == "__main__":
         save_signals=True,
         signals_outdir="./gridsearch_results/block2activities_snapshots/signals",
         selection_metric="hausdorff",
+        stopping_rule="n_bkps",
     )
 
     print("Number of samples:", len(training_samples))

@@ -107,6 +107,27 @@ def detect_change_points_from_signal(
     return selected_times[breakpoint_indices].tolist()
 
 
+def extract_true_change_points(entry: dict[str, Any]) -> tuple[list[float], int]:
+    """
+    Read the canonical dataset label format into a sorted list of ground-truth
+    change points and its count.
+    """
+    if "bkps" not in entry:
+        raise KeyError("Dataset entry must contain the 'bkps' key.")
+    if "n_bkps" not in entry:
+        raise KeyError("Dataset entry must contain the 'n_bkps' key.")
+
+    true_change_points = sorted(float(change_point) for change_point in entry["bkps"])
+    n_bkps = int(entry["n_bkps"])
+    if n_bkps != len(true_change_points):
+        raise ValueError(
+            "Dataset entry has inconsistent breakpoint metadata: "
+            f"n_bkps={n_bkps}, len(bkps)={len(true_change_points)}."
+        )
+
+    return true_change_points, n_bkps
+
+
 # -----------------------------------------------------------------------------
 # Signal generation phase
 # -----------------------------------------------------------------------------
@@ -492,15 +513,17 @@ if __name__ == "__main__":
     margin = 5.0
     n_jobs = 6
 
-    training_samples = [
-        CPSample(
-            data=entry["tnet"],
-            true_change_points=[float(entry["bkp"])],
-            n_bkps=1,
-            name=f"sample_{i}",
+    training_samples = []
+    for i, entry in enumerate(dataset):
+        true_change_points, n_bkps = extract_true_change_points(entry)
+        training_samples.append(
+            CPSample(
+                data=entry["tnet"],
+                true_change_points=true_change_points,
+                n_bkps=n_bkps,
+                name=f"sample_{i}",
+            )
         )
-        for i, entry in enumerate(dataset)
-    ]
 
     # Generated entropy signals can optionally be saved while running the
     # grid-search under:

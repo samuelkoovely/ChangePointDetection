@@ -23,7 +23,7 @@ fig, axes = plt.subplots(5, 2, figsize=(18, 10), sharex=False, squeeze=False)
 for sample in range(5):
     with open('data/block2activities_snapshots.pkl', 'rb') as handle:
         tnet = pickle.load(handle)[sample]
-        bkp = float(tnet['bkp'])
+        bkps = [float(change_point) for change_point in tnet['bkps']]
 
     with open(
         f'gridsearch_results/block2activities_snapshots/signals/sample_{sample}/'
@@ -43,12 +43,13 @@ for sample in range(5):
     ax_full.plot(signal_full['signal'], label=f'sample_{sample}')
     ymin_full = np.min(signal_full['signal'])
     ymax_full = np.max(signal_full['signal'])
-    ax_full.vlines(
-        tnet['bkp'],
-        ymin=ymin_full,
-        ymax=ymax_full,
-        color='black',
-    )
+    for bkp in bkps:
+        ax_full.vlines(
+            bkp,
+            ymin=ymin_full,
+            ymax=ymax_full,
+            color='black',
+        )
     for pred_cp in predicted_change_points_full[sample]:
         ax_full.vlines(
             pred_cp,
@@ -64,12 +65,13 @@ for sample in range(5):
     ax_lin.plot(signal_lin['signal'], label=f'sample_{sample}')
     ymin_lin = np.min(signal_lin['signal'])
     ymax_lin = np.max(signal_lin['signal'])
-    ax_lin.vlines(
-        tnet['bkp'],
-        ymin=ymin_lin,
-        ymax=ymax_lin,
-        color='black',
-    )
+    for bkp in bkps:
+        ax_lin.vlines(
+            bkp,
+            ymin=ymin_lin,
+            ymax=ymax_lin,
+            color='black',
+        )
     for pred_cp in predicted_change_points_lin[sample]:
         ax_lin.vlines(
             pred_cp,

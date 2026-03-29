@@ -108,11 +108,12 @@ for sample in range(n_samples):
     if signal_values.size > 0:
         ymin = np.min(signal_values)
         ymax = np.max(signal_values)
-        ax.vlines(
-            entry['bkp'],
-            ymin=ymin,
-            ymax=ymax,
-        )
+        for bkp in entry['bkps']:
+            ax.vlines(
+                bkp,
+                ymin=ymin,
+                ymax=ymax,
+            )
         for pred_cp in predicted_change_points[sample]:
             ax.vlines(
                 pred_cp,

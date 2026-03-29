@@ -13,7 +13,7 @@ sanpshots_dataset = []
 for data_index in range(len(dataset)):
     tnet = dataset[data_index]
     net = tnet['tnet']
-    t_split = tnet['bkp']
+    breakpoints = [float(breakpoint) for breakpoint in tnet['bkps']]
 
     #snapshots = []
 
@@ -47,7 +47,12 @@ for data_index in range(len(dataset)):
     tnet['tnet'] = snap_net
     #tnet['snapshots'] = snapshots
     tnet['aggregation_window'] = aggregation_window
-    tnet['bkp'] = t_split // aggregation_window
+    aggregated_breakpoints = sorted({
+        int(breakpoint // aggregation_window)
+        for breakpoint in breakpoints
+    })
+    tnet['bkps'] = aggregated_breakpoints
+    tnet['n_bkps'] = len(aggregated_breakpoints)
     sanpshots_dataset.append(tnet)
 
 

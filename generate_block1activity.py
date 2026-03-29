@@ -34,6 +34,13 @@ for i in range(5):
 
     tnet_trimmed, t_0 = EDLDE.trim_temporal_network_head_tail(tnet, density=density, inter_tau=inter_tau, tail_start_time=t_end)
 
-    tnets.append({'tnet': tnet_trimmed, 'bkp': t_split - t_0, 'starts': tnet_trimmed.events_table['starting_times'], 'ends': tnet_trimmed.events_table['ending_times']}) 
+    breakpoint = float(t_split - t_0)
+    tnets.append({
+        'tnet': tnet_trimmed,
+        'bkps': [breakpoint],
+        'n_bkps': 1,
+        'starts': tnet_trimmed.events_table['starting_times'],
+        'ends': tnet_trimmed.events_table['ending_times'],
+    })
 
 pickle.dump(tnets, open('data/block1activity.pkl', 'wb'))

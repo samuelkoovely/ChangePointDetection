@@ -2,7 +2,9 @@ import numpy as np
 import pickle
 from gridsearch_score_snapshots import CPSample, extract_true_change_points, grid_search
 
-with open("data/block2activities_snapshots.pkl", "rb") as f:
+PENALTY = 0.5
+
+with open("data/multibkps_block2activities_snapshots.pkl", "rb") as f:
         dataset = pickle.load(f)
 
 aggregation_window = dataset[0]['aggregation_window'] 
@@ -32,19 +34,23 @@ summary = grid_search(
     windows=windows,
     margin=margin,
     n_jobs=n_jobs,
-    outdir="./gridsearch_results/block2activities_snapshots",
+    outdir="./gridsearch_results/multibkps_block2activities_snapshots",
     # Snapshot labels are stored as indices, so using the full signal avoids
     # having to remap ground-truth indices onto a subsampled entropy signal.
     sample_fraction=1.0,
     kernel="linear",
     save_signals=True,
-    signals_outdir="./gridsearch_results/block2activities_snapshots/signals",
-    selection_metric="hausdorff",
+    signals_outdir="./gridsearch_results/multibkps_block2activities_snapshots/signals",
+    selection_metric="f1",
+    stopping_rule="penalty",
+    penalty=PENALTY,
 )
 
 print("Number of samples:", len(training_samples))
 print("Score array shape:", summary["score_array"].shape)
 print("Selection metric:", summary["selection_metric"])
+print("Stopping rule:", summary["stopping_rule"])
+print("Penalty:", summary["penalty"])
 print("Best lamda:", summary["best_lamda"])
 print("Best window:", summary["best_window"])
 print("Best selected score:", summary["best_score"])

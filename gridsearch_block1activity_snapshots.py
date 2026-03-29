@@ -1,6 +1,6 @@
 import numpy as np
 import pickle
-from gridsearch_score_snapshots import CPSample, grid_search
+from gridsearch_score_snapshots import CPSample, extract_true_change_points, grid_search
 
 with open("data/block1activity_snapshots.pkl", "rb") as f:
         dataset = pickle.load(f)
@@ -11,15 +11,17 @@ windows = [aggregation_window / 2]
 margin = 1.0
 n_jobs = 6
 
-training_samples = [
-    CPSample(
-        data=entry["tnet"],
-        true_change_points=[float(entry["bkp"])],
-        n_bkps=1,
-        name=f"sample_{i}",
+training_samples = []
+for i, entry in enumerate(dataset):
+    true_change_points, n_bkps = extract_true_change_points(entry)
+    training_samples.append(
+        CPSample(
+            data=entry["tnet"],
+            true_change_points=true_change_points,
+            n_bkps=n_bkps,
+            name=f"sample_{i}",
+        )
     )
-    for i, entry in enumerate(dataset)
-]
 
 # Generated entropy signals can optionally be saved while running the
 # grid-search under:

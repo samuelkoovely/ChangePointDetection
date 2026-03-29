@@ -572,8 +572,8 @@ if __name__ == "__main__":
     training_samples = [
         CPSample(
             data=entry["tnet"],
-            true_change_points=[float(entry["bkp"])],
-            n_bkps=1,
+            true_change_points=[float(change_point) for change_point in entry["bkps"]],
+            n_bkps=int(entry["n_bkps"]),
             name=f"sample_{i}",
         )
         for i, entry in enumerate(dataset)

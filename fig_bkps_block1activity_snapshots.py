@@ -15,7 +15,7 @@ fig, axes = plt.subplots(5, 1, figsize=(14, 8), sharex=False)
 for sample in range(5):
     with open('data/block1activity_snapshots.pkl', 'rb') as handle:
         tnet = pickle.load(handle)[sample]
-        bkp = float(tnet['bkp'])
+        bkps = [float(change_point) for change_point in tnet['bkps']]
 
     with open(f'gridsearch_results/block1activity_snapshots/signals/sample_{sample}/signal_lamda_{lamda:.11f}_window_{window:g}.pkl', 'rb') as handle:
         signal = pickle.load(handle)
@@ -24,11 +24,12 @@ for sample in range(5):
     ax.plot(signal['signal'], label=f'sample_{sample}')
     ymin = np.min(signal['signal'])
     ymax = np.max(signal['signal'])
-    ax.vlines(
-        tnet['bkp'],
-        ymin=ymin,
-        ymax=ymax
-    )
+    for bkp in bkps:
+        ax.vlines(
+            bkp,
+            ymin=ymin,
+            ymax=ymax
+        )
     for pred_cp in predicted_change_points[sample]:
         ax.vlines(
             pred_cp,
