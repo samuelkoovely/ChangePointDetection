@@ -173,6 +173,8 @@ def detect_change_points_from_signal(
     snapshot_indices: Sequence[float],
     n_bkps: int,
     kernel: str = "linear",
+    stopping_rule: str = "n_bkps",
+    penalty: float | None = None,
 ) -> list[float]:
     """
     Run ruptures on a precomputed signal and convert breakpoint positions back
@@ -196,12 +198,22 @@ def detect_change_points_from_signal(
             f"Got {signal.shape[0]} and {len(snapshot_indices)}."
         )
 
-    if signal.shape[0] == 0 or signal.shape[0] <= n_bkps:
+    if stopping_rule not in {"n_bkps", "penalty"}:
+        raise ValueError("stopping_rule must be either 'n_bkps' or 'penalty'.")
+
+    if signal.shape[0] == 0:
         return []
 
     try:
         algo = rpt.KernelCPD(kernel=kernel).fit(signal)
-        breakpoint_indices = np.asarray(algo.predict(n_bkps=n_bkps), dtype=int)
+        if stopping_rule == "n_bkps":
+            if n_bkps <= 0 or signal.shape[0] <= n_bkps:
+                return []
+            breakpoint_indices = np.asarray(algo.predict(n_bkps=n_bkps), dtype=int)
+        else:
+            if penalty is None:
+                raise ValueError("penalty must be provided when stopping_rule='penalty'.")
+            breakpoint_indices = np.asarray(algo.predict(pen=float(penalty)), dtype=int)
     except Exception:
         return []
 
@@ -280,6 +292,8 @@ def evaluate_precomputed_n_eigen_signals(
     margin: float,
     signals_by_window: dict[int, list[dict[str, Any]]],
     kernel: str = "linear",
+    stopping_rule: str = "n_bkps",
+    penalty: float | None = None,
 ) -> dict[str, Any]:
     """
     Evaluate all candidate window lengths for one `n_eigen` using precomputed
@@ -315,6 +329,8 @@ def evaluate_precomputed_n_eigen_signals(
                 snapshot_indices=signal_result["snapshot_indices"],
                 n_bkps=sample.n_bkps,
                 kernel=kernel,
+                stopping_rule=stopping_rule,
+                penalty=penalty,
             )
             window_predicted_change_points.append(pred_cps)
             window_f1_scores.append(f1_score(sample.true_change_points, pred_cps, margin))
@@ -379,6 +395,8 @@ def grid_search_laplacian_similarity(
     save_signals: bool = False,
     signals_outdir: str | Path | None = None,
     selection_metric: str = "f1",
+    stopping_rule: str = "n_bkps",
+    penalty: float | None = None,
 ) -> dict[str, Any]:
     """
     Run a parallel grid-search over all `(n_eigen, window_length)` pairs.
@@ -397,6 +415,10 @@ def grid_search_laplacian_similarity(
         raise ValueError("All n_eigens must be strictly positive.")
     if selection_metric not in {"f1", "hausdorff"}:
         raise ValueError("selection_metric must be either 'f1' or 'hausdorff'.")
+    if stopping_rule not in {"n_bkps", "penalty"}:
+        raise ValueError("stopping_rule must be either 'n_bkps' or 'penalty'.")
+    if stopping_rule == "penalty" and penalty is None:
+        raise ValueError("penalty must be provided when stopping_rule='penalty'.")
 
     t0 = time.time()
     t_signal_phase_start = time.time()
@@ -438,6 +460,8 @@ def grid_search_laplacian_similarity(
             margin=margin,
             signals_by_window=signal_bundle["signals_by_window"],
             kernel=kernel,
+            stopping_rule=stopping_rule,
+            penalty=penalty,
         )
         for signal_bundle in n_eigen_signal_results
     ]
@@ -511,6 +535,8 @@ def grid_search_laplacian_similarity(
         "margin": float(margin),
         "kernel": kernel,
         "normalize": bool(normalize),
+        "stopping_rule": stopping_rule,
+        "penalty": None if penalty is None else float(penalty),
         "backend_requested": backend,
         "backend_used": backend_used,
         "num_samples": len(samples),
@@ -602,12 +628,15 @@ if __name__ == "__main__":
         save_signals=True,
         signals_outdir="./gridsearch_results/block2activities_snapshots_laplacians/signals",
         selection_metric="hausdorff",
+        stopping_rule="n_bkps",
     )
 
     print("Number of samples:", len(training_samples))
     print("Score array shape:", summary["score_array"].shape)
     print("Backend used:", summary["backend_used"])
     print("Selection metric:", summary["selection_metric"])
+    print("Stopping rule:", summary["stopping_rule"])
+    print("Penalty:", summary["penalty"])
     print("Best n_eigen:", summary["best_n_eigen"])
     print("Best window_length:", summary["best_window_length"])
     print("Best selected score:", summary["best_score"])
