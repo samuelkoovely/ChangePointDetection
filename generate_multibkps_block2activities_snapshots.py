@@ -11,6 +11,7 @@ from TemporalNetwork import ContTempNetwork
 INPUT_PATH = Path("data/multibkps_block2activities.pkl")
 OUTPUT_PATH = Path("data/multibkps_block2activities_snapshots.pkl")
 AGGREGATION_WINDOW = 4
+SNAPSHOTS_TO_SKIP_AT_START = 1
 
 
 def aggregate_breakpoints(
@@ -20,7 +21,7 @@ def aggregate_breakpoints(
 ) -> list[int]:
     aggregated_breakpoints = sorted(
         {
-            int(float(breakpoint) // aggregation_window)
+            int(float(breakpoint) // aggregation_window) - SNAPSHOTS_TO_SKIP_AT_START
             for breakpoint in breakpoints
         }
     )
@@ -38,7 +39,11 @@ def build_snapshot_network(net: ContTempNetwork, aggregation_window: int) -> tup
     ending_times = []
 
     snapshot_starts = list(
-        range(0, int(net.times[-1] - aggregation_window), aggregation_window)
+        range(
+            SNAPSHOTS_TO_SKIP_AT_START * aggregation_window,
+            int(net.times[-1] - aggregation_window),
+            aggregation_window,
+        )
     )
 
     for snapshot_start in snapshot_starts:

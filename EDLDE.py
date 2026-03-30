@@ -254,8 +254,12 @@ def trim_temporal_network_head_tail(
     The kept events are those whose *starting time* satisfies:
         head <= starting_times < tail_start_time
 
-    where the default head cutoff is computed as:
-        head = inter_tau / 2 * np.log(density * inter_tau)
+    where the default head cutoff is computed from the exact formula
+    with λ = density and μ = 1 / inter_tau:
+        head = -inter_tau * np.log(
+            (-1 + np.sqrt(1 + 4 * density * inter_tau))
+            / (2 * density * inter_tau)
+        )
 
     After filtering, times are translated so that the first kept event starts at 0.
     By default we shift by the *first kept starting time* (which can be > head if
@@ -308,8 +312,8 @@ def trim_temporal_network_head_tail(
         val = density * inter_tau
         if val <= 0:
             raise ValueError("density * inter_tau must be > 0 to compute the head cutoff.")
-        # If density*inter_tau <= 1 the log is <= 0; in that case we do not remove a head.
-        head = max(0.0, float(inter_tau) / 2.0 * float(np.log(val)))
+        ratio = (-1.0 + float(np.sqrt(1.0 + 4.0 * val))) / (2.0 * val)
+        head = -float(inter_tau) * float(np.log(ratio))
     else:
         head = float(head_start_time)
 
