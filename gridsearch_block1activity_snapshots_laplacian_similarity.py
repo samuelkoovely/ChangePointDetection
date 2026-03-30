@@ -393,8 +393,12 @@ def grid_search_laplacian_similarity(
         raise ValueError("n_eigens must contain at least one value.")
     if np.any(window_lengths <= 0):
         raise ValueError("All window_lengths must be strictly positive.")
-    if np.any(n_eigens <= 0):
-        raise ValueError("All n_eigens must be strictly positive.")
+    if np.any(n_eigens < 3):
+        raise ValueError(
+            "All n_eigens must be at least 3. "
+            "n_eigen=2 is excluded because the normalized Laplacian signature "
+            "degenerates for connected graphs."
+        )
     if selection_metric not in {"f1", "hausdorff"}:
         raise ValueError("selection_metric must be either 'f1' or 'hausdorff'.")
 
@@ -562,9 +566,9 @@ if __name__ == "__main__":
 
     # `window_length` is expressed in number of snapshots, not in time units.
     window_lengths = list(range(1, max_window_length + 1))
-    n_eigens = [k for k in [2, 4, 6, 8, 10] if k <= max_n_eigen]
+    n_eigens = [k for k in [3, 4, 6, 8, 10] if k <= max_n_eigen]
     if not n_eigens:
-        n_eigens = [1]
+        raise ValueError("No valid n_eigen >= 3 is available for this dataset.")
 
     margin = 1.0
     n_jobs = 6

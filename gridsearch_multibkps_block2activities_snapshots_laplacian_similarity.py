@@ -18,9 +18,9 @@ aggregation_window = int(dataset[0]["aggregation_window"])
 first_net = dataset[0]["tnet"]
 window_lengths = [max(1, aggregation_window // 2)]
 max_n_eigen = max(1, int(first_net.num_nodes) - 1)
-n_eigens = [k for k in [2, 4, 6, 8, 10] if k <= max_n_eigen]
+n_eigens = [k for k in [3, 4, 6, 8, 10] if k <= max_n_eigen]
 if not n_eigens:
-    n_eigens = [1]
+    raise ValueError("No valid n_eigen >= 3 is available for this dataset.")
 
 margin = 1.0
 n_jobs = 6
