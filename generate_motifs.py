@@ -1,132 +1,107 @@
-import EDLDE
-import random as rd
+from pathlib import Path
 import pickle
+
 import numpy as np
 
-n_per_group = 25
-n_groups = 4
-t_start = 0
-t_end = 300
-
-basis_num_communities = 2
-powers_num_communities = [2, 1, 0]
-list_p_within_community = [45/50] * len(powers_num_communities)
-
-inter_tau_1 = 10
-density_1 = 5
-
-inter_tau_2 = 15
-density_2 = 5
-
-inter_tau_3 = 20
-density_3 = 5
-
-rd.seed(34)
-
-t_split_1 = 100
-t_split_2 = 200
-# Phase 1: [t0, t_split]
-n1, s1, e1 = EDLDE.EDLDE(
-    density=density_1, inter_tau=inter_tau_1, t_start=t_start, t_end=t_split_1, seed=1415)
-# Phase 2: [t_split, t_end]
-n2, s2, e2 = EDLDE.EDLDE(
-    density=density_2, inter_tau=inter_tau_2, t_start=t_split_1, t_end=t_split_2, seed=8281
-)
-# Phase 3: [t_split_2, t_end]
-n3, s3, e3 = EDLDE.EDLDE(
-    density=density_3, inter_tau=inter_tau_3, t_start=t_split_2, t_end=t_end, seed=77
-)
-# Combine
-starts = np.concatenate([s1, s2, s3])
-ends   = np.concatenate([e1, e2, e3])
-
-tnet = EDLDE.generate_smooth_SBM(inter_tau =  0, density = 0,
-                        n_per_group = n_per_group, n_groups =n_groups,
-                        t_start = t_start, t_end =t_end,
-                        basis_num_communities = basis_num_communities, powers_num_communities = powers_num_communities, list_p_within_community = list_p_within_community,
-                        number_of_events = n1+n2+n3, starting_times=starts, ending_times=ends, seed=271)
-
-pickle.dump(tnet, open('data/merge_merge.pkl', 'wb'))
+import EDLDE
 
 
-basis_num_communities = 2
-powers_num_communities = [2, 0, 1]
-list_p_within_community = [45/50] * len(powers_num_communities)
+N_PER_GROUP = 25
+N_GROUPS = 4
+T_START = 0
+T_END = 300
+T_SPLIT_1 = 100
+T_SPLIT_2 = 200
 
-inter_tau_1 = 10
-density_1 = 5
+BASIS_NUM_COMMUNITIES = 2
+LIST_P_WITHIN_COMMUNITY = [45 / 50] * 3
 
-inter_tau_2 = 20
-density_2 = 5
+PHASE_SEEDS = [1415, 8281, 77]
+NETWORK_SEED = 271
+OUTPUT_DIR = Path("data")
 
-inter_tau_3 = 15
-density_3 = 5
+PHASE_INTERVALS = [
+    (T_START, T_SPLIT_1),
+    (T_SPLIT_1, T_SPLIT_2),
+    (T_SPLIT_2, T_END),
+]
 
-rd.seed(34)
+MOTIF_CONFIGS = [
+    {
+        "name": "merge_merge",
+        "powers_num_communities": [2, 1, 0],
+        "phases": [
+            {"inter_tau": 5, "density": 10},
+            {"inter_tau": 5, "density": 15},
+            {"inter_tau": 5, "density": 20},
+        ],
+    },
+    {
+        "name": "merge_split",
+        "powers_num_communities": [2, 0, 1],
+        "phases": [
+            {"inter_tau": 5, "density": 10},
+            {"inter_tau": 5, "density": 20},
+            {"inter_tau": 5, "density": 15},
+        ],
+    },
+    {
+        "name": "split_merge",
+        "powers_num_communities": [1, 2, 0],
+        "phases": [
+            {"inter_tau": 5, "density": 15},
+            {"inter_tau": 5, "density": 10},
+            {"inter_tau": 5, "density": 20},
+        ],
+    },
+]
 
-t_split_1 = 100
-t_split_2 = 200
-# Phase 1: [t0, t_split]
-n1, s1, e1 = EDLDE.EDLDE(
-    density=density_1, inter_tau=inter_tau_1, t_start=t_start, t_end=t_split_1, seed=1415)
-# Phase 2: [t_split, t_end]
-n2, s2, e2 = EDLDE.EDLDE(
-    density=density_2, inter_tau=inter_tau_2, t_start=t_split_1, t_end=t_split_2, seed=8281
-)
-# Phase 3: [t_split_2, t_end]
-n3, s3, e3 = EDLDE.EDLDE(
-    density=density_3, inter_tau=inter_tau_3, t_start=t_split_2, t_end=t_end, seed=77
-)
-# Combine
-starts = np.concatenate([s1, s2, s3])
-ends   = np.concatenate([e1, e2, e3])
 
-tnet = EDLDE.generate_smooth_SBM(inter_tau =  0, density = 0,
-                        n_per_group = n_per_group, n_groups =n_groups,
-                        t_start = t_start, t_end =t_end,
-                        basis_num_communities = basis_num_communities, powers_num_communities = powers_num_communities, list_p_within_community = list_p_within_community,
-                        number_of_events = n1+n2+n3, starting_times=starts, ending_times=ends, seed=271)
+def build_motif(config):
+    counts = []
+    starts = []
+    ends = []
+
+    for phase_config, phase_seed, (phase_start, phase_end) in zip(
+        config["phases"], PHASE_SEEDS, PHASE_INTERVALS
+    ):
+        number_of_events, phase_starts, phase_ends = EDLDE.EDLDE(
+            density=phase_config["density"],
+            inter_tau=phase_config["inter_tau"],
+            t_start=phase_start,
+            t_end=phase_end,
+            seed=phase_seed,
+        )
+        counts.append(number_of_events)
+        starts.append(phase_starts)
+        ends.append(phase_ends)
+
+    return EDLDE.generate_smooth_SBM(
+        inter_tau=0,
+        density=0,
+        n_per_group=N_PER_GROUP,
+        n_groups=N_GROUPS,
+        t_start=T_START,
+        t_end=T_END,
+        basis_num_communities=BASIS_NUM_COMMUNITIES,
+        powers_num_communities=config["powers_num_communities"],
+        list_p_within_community=LIST_P_WITHIN_COMMUNITY,
+        number_of_events=sum(counts),
+        starting_times=np.concatenate(starts),
+        ending_times=np.concatenate(ends),
+        seed=NETWORK_SEED,
+    )
 
 
-pickle.dump(tnet, open('data/merge_split.pkl', 'wb'))
+def main():
+    OUTPUT_DIR.mkdir(exist_ok=True)
+
+    for config in MOTIF_CONFIGS:
+        tnet = build_motif(config)
+        output_path = OUTPUT_DIR / f"{config['name']}.pkl"
+        with output_path.open("wb") as handle:
+            pickle.dump(tnet, handle)
 
 
-basis_num_communities = 2
-powers_num_communities = [1, 2, 0]
-list_p_within_community = [45/50] * len(powers_num_communities)
-
-inter_tau_1 = 15
-density_1 = 5
-
-inter_tau_2 = 10
-density_2 = 5
-
-inter_tau_3 = 20
-density_3 = 5
-
-rd.seed(34)
-
-t_split_1 = 100
-t_split_2 = 200
-# Phase 1: [t0, t_split]
-n1, s1, e1 = EDLDE.EDLDE(
-    density=density_1, inter_tau=inter_tau_1, t_start=t_start, t_end=t_split_1, seed=1415)
-# Phase 2: [t_split, t_end]
-n2, s2, e2 = EDLDE.EDLDE(
-    density=density_2, inter_tau=inter_tau_2, t_start=t_split_1, t_end=t_split_2, seed=8281
-)
-# Phase 3: [t_split_2, t_end]
-n3, s3, e3 = EDLDE.EDLDE(
-    density=density_3, inter_tau=inter_tau_3, t_start=t_split_2, t_end=t_end, seed=77
-)
-# Combine
-starts = np.concatenate([s1, s2, s3])
-ends   = np.concatenate([e1, e2, e3])
-
-tnet = EDLDE.generate_smooth_SBM(inter_tau =  0, density = 0,
-                        n_per_group = n_per_group, n_groups =n_groups,
-                        t_start = t_start, t_end =t_end,
-                        basis_num_communities = basis_num_communities, powers_num_communities = powers_num_communities, list_p_within_community = list_p_within_community,
-                        number_of_events = n1+n2+n3, starting_times=starts, ending_times=ends, seed=271)
-
-pickle.dump(tnet, open('data/split_merge.pkl', 'wb'))
+if __name__ == "__main__":
+    main()
