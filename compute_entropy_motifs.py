@@ -13,6 +13,7 @@ from joblib import Parallel, delayed
 from signal_generation import (
     PreparedSignalSample,
     WindowSamplingPlan,
+    build_window_sampling_plan,
     compute_signals_for_lambdas_prepared,
     prepare_signal_sample,
     save_signal_result,
@@ -81,6 +82,11 @@ def parse_args() -> argparse.Namespace:
         default=min(4, len(DEFAULT_LAMBDAS), os.cpu_count() or 1),
         help="Number of parallel workers across lambda blocks per motif.",
     )
+    parser.add_argument(
+        "--reverse-time",
+        action="store_true",
+        help="Compute backward entropy curves instead of forward ones.",
+    )
     return parser.parse_args()
 
 
@@ -96,6 +102,7 @@ def load_motif_network(path: str | Path) -> Any:
 def prepare_full_window_sample(
     net: Any,
     windows: Sequence[float],
+    reverse_time: bool = False,
 ) -> PreparedSignalSample:
     windows_tuple = normalize_windows(windows)
     p0 = np.ones(net.num_nodes, dtype=float) / net.num_nodes
@@ -108,32 +115,18 @@ def prepare_full_window_sample(
 
     window_plans: dict[float, WindowSamplingPlan] = {}
     for window in windows_tuple:
-        considered_times = net.times[net.times < net.times[-1] - window]
-        num_windows = len(considered_times)
-
-        if num_windows <= 0:
-            k_samples = np.array([], dtype=int)
-            t_samples = np.array([], dtype=float)
-            window_ends = np.array([], dtype=np.int64)
-        else:
-            k_samples = np.arange(num_windows, dtype=int)
-            t_samples = np.asarray(net.times[k_samples], dtype=float)
-            window_ends = np.asarray(
-                net._get_window_ends_vectorized(window, n_windows=num_windows),
-                dtype=np.int64,
-            )
-
-        window_plans[float(window)] = WindowSamplingPlan(
+        window_plans[float(window)] = build_window_sampling_plan(
+            net=net,
             window=float(window),
-            k_samples=k_samples,
-            t_samples=t_samples,
-            window_ends=window_ends,
+            reverse_time=reverse_time,
+            full_scan=True,
         )
 
     return PreparedSignalSample(
         net=net,
         windows=windows_tuple,
         sample_fraction=1.0,
+        reverse_time=bool(reverse_time),
         p0=p0,
         window_plans=window_plans,
     )
@@ -143,15 +136,21 @@ def prepare_motif_sample(
     net: Any,
     windows: Sequence[float],
     sample_fraction: float,
+    reverse_time: bool = False,
 ) -> PreparedSignalSample:
     if sample_fraction >= 1.0:
-        return prepare_full_window_sample(net=net, windows=windows)
+        return prepare_full_window_sample(
+            net=net,
+            windows=windows,
+            reverse_time=reverse_time,
+        )
 
     return prepare_signal_sample(
         net=net,
         windows=windows,
         sample_fraction=sample_fraction,
         p0=np.ones(net.num_nodes, dtype=float) / net.num_nodes,
+        reverse_time=reverse_time,
     )
 
 
@@ -179,9 +178,15 @@ def save_window_signal_legacy(
         "t_samples": np.asarray(signal_result["t_samples"], dtype=float),
         "signal": signal_array,
         "signal_array": signal_array,
+        "reverse_time": bool(signal_result.get("reverse_time", False)),
+        "direction": signal_result.get(
+            "direction",
+            "backward" if signal_result.get("reverse_time", False) else "forward",
+        ),
     }
 
-    outdir = output_base / "window_S" / window_key
+    subdir = "window_S_rev" if signal_result.get("reverse_time", False) else "window_S"
+    outdir = output_base / subdir / window_key
     outdir.mkdir(parents=True, exist_ok=True)
     with open(outdir / f"window_S{lamda_key}", "wb") as handle:
         pickle.dump(payload, handle)
@@ -206,6 +211,7 @@ def save_metadata(
     output_dir: Path,
     sample_fraction: float,
     n_jobs: int,
+    reverse_time: bool,
     elapsed_seconds: float | None = None,
 ) -> None:
     metadata = {
@@ -218,6 +224,8 @@ def save_metadata(
         "windows": np.asarray(prepared.windows, dtype=float),
         "sample_fraction": float(sample_fraction),
         "n_jobs": int(n_jobs),
+        "reverse_time": bool(reverse_time),
+        "direction": "backward" if reverse_time else "forward",
         "window_backend": WINDOW_BACKEND,
         "elapsed_seconds": elapsed_seconds,
     }
@@ -255,6 +263,7 @@ def compute_entropy_curves_for_motif(
     sample_fraction: float,
     output_base: Path,
     n_jobs: int,
+    reverse_time: bool = False,
 ) -> None:
     motif_output_dir = output_base / motif_name
     net = load_motif_network(network_path)
@@ -262,6 +271,7 @@ def compute_entropy_curves_for_motif(
         net=net,
         windows=windows,
         sample_fraction=sample_fraction,
+        reverse_time=reverse_time,
     )
 
     save_metadata(
@@ -272,6 +282,7 @@ def compute_entropy_curves_for_motif(
         output_dir=motif_output_dir,
         sample_fraction=sample_fraction,
         n_jobs=n_jobs,
+        reverse_time=reverse_time,
     )
 
     t_start = time.time()
@@ -298,6 +309,7 @@ def compute_entropy_curves_for_motif(
         output_dir=motif_output_dir,
         sample_fraction=sample_fraction,
         n_jobs=n_jobs,
+        reverse_time=reverse_time,
         elapsed_seconds=elapsed,
     )
 
@@ -324,6 +336,7 @@ def main() -> None:
             sample_fraction=float(args.sample_fraction),
             output_base=args.output_base,
             n_jobs=int(args.n_jobs),
+            reverse_time=bool(args.reverse_time),
         )
 
 

@@ -31,8 +31,8 @@ MOTIF_CONFIGS = [
         "name": "merge_merge",
         "powers_num_communities": [2, 1, 0],
         "phases": [
+            {"inter_tau": 5, "density": 5},
             {"inter_tau": 5, "density": 10},
-            {"inter_tau": 5, "density": 15},
             {"inter_tau": 5, "density": 20},
         ],
     },
@@ -40,17 +40,17 @@ MOTIF_CONFIGS = [
         "name": "merge_split",
         "powers_num_communities": [2, 0, 1],
         "phases": [
-            {"inter_tau": 5, "density": 10},
+            {"inter_tau": 5, "density": 5},
             {"inter_tau": 5, "density": 20},
-            {"inter_tau": 5, "density": 15},
+            {"inter_tau": 5, "density": 10},
         ],
     },
     {
         "name": "split_merge",
         "powers_num_communities": [1, 2, 0],
         "phases": [
-            {"inter_tau": 5, "density": 15},
             {"inter_tau": 5, "density": 10},
+            {"inter_tau": 5, "density": 5},
             {"inter_tau": 5, "density": 20},
         ],
     },

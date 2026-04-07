@@ -19,12 +19,17 @@ SUPPORTED_WINDOW_BACKENDS = {"auto", "naive", "segment_tree"}
 @dataclass(frozen=True)
 class WindowSamplingPlan:
     """
-    Precomputed sampling/index information for one window length on one sample.
+    Precomputed sampling/query information for one window length on one sample.
+
+    `k_samples` and `t_samples` always refer to the sampled anchor points on the
+    original time grid. For forward signals the anchor is the window start;
+    for backward signals it is the window end.
     """
     window: float
     k_samples: np.ndarray
     t_samples: np.ndarray
-    window_ends: np.ndarray
+    query_lefts: np.ndarray
+    query_rights: np.ndarray
 
 
 @dataclass
@@ -39,6 +44,7 @@ class PreparedSignalSample:
     net: Any
     windows: tuple[float, ...]
     sample_fraction: float
+    reverse_time: bool
     p0: np.ndarray
     window_plans: dict[float, WindowSamplingPlan]
 
@@ -126,32 +132,40 @@ def get_sampled_window_indices_and_times(
     net: Any,
     window: float,
     sample_fraction: float = DEFAULT_SAMPLE_FRACTION,
+    reverse_time: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Select valid window start indices by sampling approximately a fixed fraction
-    of window positions uniformly in time.
+    Select valid window anchor indices by sampling approximately a fixed
+    fraction of window positions uniformly in time.
 
     Returns
     -------
     k_samples:
-        Integer indices of sampled windows.
+        Integer indices of sampled window anchors.
     t_samples:
-        Times corresponding to the sampled window starts.
+        Times corresponding to the sampled window anchors.
     """
-    considered_times = net.times[net.times < net.times[-1] - window]
-    M = len(considered_times)
+    times_arr = np.asarray(net.times, dtype=np.float64)
+    if reverse_time:
+        candidate_indices = np.flatnonzero(times_arr > times_arr[0] + float(window))
+    else:
+        candidate_indices = np.flatnonzero(times_arr < times_arr[-1] - float(window))
+
+    M = len(candidate_indices)
 
     if M <= 0:
         return np.array([], dtype=int), np.array([], dtype=float)
 
     m = max(1, int(np.ceil(sample_fraction * M)))
 
-    t_targets = np.linspace(float(considered_times[0]), float(considered_times[-1]), m)
-    k_samples = np.searchsorted(considered_times, t_targets, side="left")
-    k_samples = np.clip(k_samples, 0, M - 1)
-    k_samples = np.unique(k_samples).astype(int)
+    candidate_times = times_arr[candidate_indices]
+    t_targets = np.linspace(float(candidate_times[0]), float(candidate_times[-1]), m)
+    sample_positions = np.searchsorted(candidate_times, t_targets, side="left")
+    sample_positions = np.clip(sample_positions, 0, M - 1)
+    sample_positions = np.unique(sample_positions).astype(int)
 
-    t_samples = net.times[k_samples]
+    k_samples = candidate_indices[sample_positions].astype(int)
+    t_samples = times_arr[k_samples].astype(float)
     return k_samples, t_samples
 
 
@@ -187,32 +201,107 @@ def _get_uniform_p0(net: Any, p0: np.ndarray | None) -> np.ndarray:
 
 def _get_window_ends_vectorized(
     net: Any,
+    anchor_indices: np.ndarray,
     window: float,
-    n_windows: int,
 ) -> np.ndarray:
     """
-    Return window-end indices for all valid window starts.
-
-    Falls back to a local vectorized implementation if the temporal-network
-    object does not expose `_get_window_ends_vectorized`.
+    Return forward query right-boundaries for the provided window starts.
     """
-    if n_windows <= 0:
+    anchor_indices = np.asarray(anchor_indices, dtype=np.int64)
+    if len(anchor_indices) == 0:
         return np.array([], dtype=np.int64)
 
-    if hasattr(net, "_get_window_ends_vectorized"):
-        return np.asarray(
-            net._get_window_ends_vectorized(window, n_windows=n_windows),
-            dtype=np.int64,
-        )
-
     times_arr = np.asarray(net.times, dtype=np.float64)
-    target_times = times_arr[:n_windows] + float(window)
+    target_times = times_arr[anchor_indices] + float(window)
     window_ends = np.searchsorted(times_arr, target_times, side="right") - 1
     np.clip(window_ends, 0, len(times_arr) - 1, out=window_ends)
     return window_ends.astype(np.int64)
 
 
-def _empty_signal_result(lamda: float, window: float) -> dict[str, Any]:
+def _get_backward_window_starts_vectorized(
+    net: Any,
+    anchor_indices: np.ndarray,
+    window: float,
+) -> np.ndarray:
+    """
+    Return backward query left-boundaries for the provided window ends.
+    """
+    anchor_indices = np.asarray(anchor_indices, dtype=np.int64)
+    if len(anchor_indices) == 0:
+        return np.array([], dtype=np.int64)
+
+    times_arr = np.asarray(net.times, dtype=np.float64)
+    target_times = times_arr[anchor_indices] - float(window)
+    window_starts = np.searchsorted(times_arr, target_times, side="right") - 1
+    np.clip(window_starts, 0, len(times_arr) - 1, out=window_starts)
+    return window_starts.astype(np.int64)
+
+
+def build_window_sampling_plan(
+    net: Any,
+    window: float,
+    sample_fraction: float = DEFAULT_SAMPLE_FRACTION,
+    reverse_time: bool = False,
+    full_scan: bool = False,
+) -> WindowSamplingPlan:
+    """
+    Build the sampling/query plan for one window length.
+    """
+    times_arr = np.asarray(net.times, dtype=np.float64)
+    if reverse_time:
+        candidate_indices = np.flatnonzero(times_arr > times_arr[0] + float(window))
+    else:
+        candidate_indices = np.flatnonzero(times_arr < times_arr[-1] - float(window))
+
+    if len(candidate_indices) == 0:
+        return WindowSamplingPlan(
+            window=float(window),
+            k_samples=np.array([], dtype=int),
+            t_samples=np.array([], dtype=float),
+            query_lefts=np.array([], dtype=np.int64),
+            query_rights=np.array([], dtype=np.int64),
+        )
+
+    if full_scan:
+        k_samples = candidate_indices.astype(int)
+        t_samples = times_arr[k_samples].astype(float)
+    else:
+        k_samples, t_samples = get_sampled_window_indices_and_times(
+            net=net,
+            window=window,
+            sample_fraction=sample_fraction,
+            reverse_time=reverse_time,
+        )
+
+    if reverse_time:
+        query_lefts = _get_backward_window_starts_vectorized(
+            net=net,
+            anchor_indices=k_samples,
+            window=window,
+        )
+        query_rights = np.asarray(k_samples, dtype=np.int64) - 1
+    else:
+        query_lefts = np.asarray(k_samples, dtype=np.int64)
+        query_rights = _get_window_ends_vectorized(
+            net=net,
+            anchor_indices=k_samples,
+            window=window,
+        )
+
+    return WindowSamplingPlan(
+        window=float(window),
+        k_samples=np.asarray(k_samples, dtype=int),
+        t_samples=np.asarray(t_samples, dtype=float),
+        query_lefts=np.asarray(query_lefts, dtype=np.int64),
+        query_rights=np.asarray(query_rights, dtype=np.int64),
+    )
+
+
+def _empty_signal_result(
+    lamda: float,
+    window: float,
+    reverse_time: bool = False,
+) -> dict[str, Any]:
     """
     Return an empty signal result for a window with no valid starts.
     """
@@ -222,6 +311,8 @@ def _empty_signal_result(lamda: float, window: float) -> dict[str, Any]:
         "k_samples": np.array([], dtype=int),
         "t_samples": np.array([], dtype=float),
         "signal": np.array([], dtype=float),
+        "reverse_time": bool(reverse_time),
+        "direction": "backward" if reverse_time else "forward",
     }
 
 
@@ -230,6 +321,7 @@ def prepare_signal_sample(
     windows: Sequence[float] = DEFAULT_WINDOWS,
     sample_fraction: float = DEFAULT_SAMPLE_FRACTION,
     p0: np.ndarray | None = None,
+    reverse_time: bool = False,
 ) -> PreparedSignalSample:
     """
     Prepare per-sample state reused across all lambdas.
@@ -245,28 +337,19 @@ def prepare_signal_sample(
     window_plans: dict[float, WindowSamplingPlan] = {}
 
     for window in windows_tuple:
-        k_samples, t_samples = get_sampled_window_indices_and_times(
+        window_plans[window] = build_window_sampling_plan(
             net=net,
             window=window,
             sample_fraction=sample_fraction,
-        )
-        considered_times = net.times[net.times < net.times[-1] - window]
-        window_ends = _get_window_ends_vectorized(
-            net=net,
-            window=window,
-            n_windows=len(considered_times),
-        )
-        window_plans[window] = WindowSamplingPlan(
-            window=float(window),
-            k_samples=np.asarray(k_samples, dtype=int),
-            t_samples=np.asarray(t_samples, dtype=float),
-            window_ends=window_ends,
+            reverse_time=reverse_time,
+            full_scan=False,
         )
 
     return PreparedSignalSample(
         net=net,
         windows=windows_tuple,
         sample_fraction=float(sample_fraction),
+        reverse_time=bool(reverse_time),
         p0=p0_arr,
         window_plans=window_plans,
     )
@@ -292,6 +375,7 @@ def build_segment_tree_for_lambda(
     use_linear_approx: bool = False,
     lin_t_s: int = 10,
     force_csr: bool = True,
+    reverse_time: bool = False,
 ) -> OrderedMatrixProductSegmentTree:
     """
     Build one ordered-product segment tree for all inter-transition matrices of
@@ -303,45 +387,68 @@ def build_segment_tree_for_lambda(
         use_linear_approx=use_linear_approx,
         lin_t_s=lin_t_s,
     )
+    if reverse_time:
+        source_mats = list(reversed(source_mats))
     return OrderedMatrixProductSegmentTree(source_mats, force_csr=force_csr)
 
 
-def _compute_window_entropy_signal_naive(
+def _copy_matrix(matrix):
+    if hasattr(matrix, "copy"):
+        return matrix.copy()
+    return np.array(matrix, copy=True)
+
+
+def _compute_ordered_window_product_direct(
+    source_mats,
+    left: int,
+    right: int,
+    reverse_time: bool = False,
+):
+    """
+    Compute one ordered matrix product directly from the source matrices.
+    """
+    if left < 0 or right < left or right >= len(source_mats):
+        raise IndexError(
+            f"invalid query bounds ({left}, {right}) for {len(source_mats)} matrices"
+        )
+
+    if reverse_time:
+        Tk_window = _copy_matrix(source_mats[right])
+        for idx in range(int(right) - 1, int(left) - 1, -1):
+            Tk_window = Tk_window @ source_mats[idx]
+    else:
+        Tk_window = _copy_matrix(source_mats[left])
+        for idx in range(int(left) + 1, int(right) + 1):
+            Tk_window = Tk_window @ source_mats[idx]
+
+    return Tk_window
+
+
+def _compute_window_entropy_signal_direct(
+    source_mats,
     prepared: PreparedSignalSample,
     lamda: float,
     plan: WindowSamplingPlan,
-    use_linear_approx: bool = False,
-    lin_t_s: int = 10,
 ) -> dict[str, Any]:
     """
-    Compute one window entropy signal via the existing sliding-window method.
+    Compute one window entropy signal via direct ordered products.
     """
     if len(plan.k_samples) == 0:
-        return _empty_signal_result(lamda=lamda, window=plan.window)
+        return _empty_signal_result(
+            lamda=lamda,
+            window=plan.window,
+            reverse_time=prepared.reverse_time,
+        )
 
     S_arr = np.empty(len(plan.k_samples), dtype=float)
-    k_to_pos = {int(k): i for i, k in enumerate(plan.k_samples)}
-
-    def k_to_idx(k: int) -> int:
-        return k_to_pos[int(k)]
-
-    on_T = compute_S_rate.make_on_window_matrix_entropy_callback_prealloc(
-        prepared.p0,
-        S_arr,
-        k_to_idx,
-    )
-
-    prepared.net.compute_transition_matrices_sliding_timewindow(
-        lamda=lamda,
-        reverse_time=False,
-        window_timelength=plan.window,
-        save_intermediate=False,
-        on_window_matrix=on_T,
-        force_csr=True,
-        use_linear_inter_T=use_linear_approx,
-        lin_t_s=lin_t_s,
-        k_samples=plan.k_samples,
-    )
+    for idx, (left, right) in enumerate(zip(plan.query_lefts, plan.query_rights)):
+        Tk_window = _compute_ordered_window_product_direct(
+            source_mats=source_mats,
+            left=int(left),
+            right=int(right),
+            reverse_time=prepared.reverse_time,
+        )
+        S_arr[idx] = compute_S_rate.conditional_entropy_of_T(Tk_window, prepared.p0)
 
     return {
         "lamda": float(lamda),
@@ -349,6 +456,8 @@ def _compute_window_entropy_signal_naive(
         "k_samples": np.asarray(plan.k_samples, dtype=int),
         "t_samples": np.asarray(plan.t_samples, dtype=float),
         "signal": S_arr,
+        "reverse_time": bool(prepared.reverse_time),
+        "direction": "backward" if prepared.reverse_time else "forward",
     }
 
 
@@ -362,11 +471,21 @@ def _compute_window_entropy_signal_from_tree(
     Compute one window entropy signal by querying a prebuilt segment tree.
     """
     if len(plan.k_samples) == 0:
-        return _empty_signal_result(lamda=lamda, window=plan.window)
+        return _empty_signal_result(
+            lamda=lamda,
+            window=plan.window,
+            reverse_time=prepared.reverse_time,
+        )
 
     S_arr = np.empty(len(plan.k_samples), dtype=float)
-    for idx, k in enumerate(plan.k_samples):
-        Tk_window = tree.query(int(k), int(plan.window_ends[int(k)]))
+    for idx, (left, right) in enumerate(zip(plan.query_lefts, plan.query_rights)):
+        if prepared.reverse_time:
+            tree_left = tree.num_matrices - 1 - int(right)
+            tree_right = tree.num_matrices - 1 - int(left)
+        else:
+            tree_left = int(left)
+            tree_right = int(right)
+        Tk_window = tree.query(tree_left, tree_right)
         S_arr[idx] = compute_S_rate.conditional_entropy_of_T(Tk_window, prepared.p0)
 
     return {
@@ -375,6 +494,8 @@ def _compute_window_entropy_signal_from_tree(
         "k_samples": np.asarray(plan.k_samples, dtype=int),
         "t_samples": np.asarray(plan.t_samples, dtype=float),
         "signal": S_arr,
+        "reverse_time": bool(prepared.reverse_time),
+        "direction": "backward" if prepared.reverse_time else "forward",
     }
 
 
@@ -408,6 +529,7 @@ def compute_signals_for_lambda_prepared(
             use_linear_approx=use_linear_approx,
             lin_t_s=lin_t_s,
             force_csr=True,
+            reverse_time=prepared.reverse_time,
         )
         for window in prepared.windows:
             plan = prepared.window_plans[window]
@@ -418,14 +540,19 @@ def compute_signals_for_lambda_prepared(
                 plan=plan,
             )
     else:
+        source_mats = _get_inter_transition_matrices(
+            net=prepared.net,
+            lamda=lamda,
+            use_linear_approx=use_linear_approx,
+            lin_t_s=lin_t_s,
+        )
         for window in prepared.windows:
             plan = prepared.window_plans[window]
-            results[window] = _compute_window_entropy_signal_naive(
+            results[window] = _compute_window_entropy_signal_direct(
+                source_mats=source_mats,
                 prepared=prepared,
                 lamda=lamda,
                 plan=plan,
-                use_linear_approx=use_linear_approx,
-                lin_t_s=lin_t_s,
             )
 
     return results
@@ -466,6 +593,7 @@ def compute_window_entropy_signal(
     use_linear_approx: bool = False,
     lin_t_s: int = 10,
     window_backend: str = "auto",
+    reverse_time: bool = False,
 ) -> dict[str, Any]:
     """
     Compute the entropy signal for one (lambda, window) pair.
@@ -484,6 +612,7 @@ def compute_window_entropy_signal(
         windows=[window],
         sample_fraction=sample_fraction,
         p0=p0,
+        reverse_time=reverse_time,
     )
     compute_inter_transition_matrices_for_lambda(
         net,
@@ -502,6 +631,7 @@ def compute_window_entropy_signal(
             use_linear_approx=use_linear_approx,
             lin_t_s=lin_t_s,
             force_csr=True,
+            reverse_time=prepared.reverse_time,
         )
         return _compute_window_entropy_signal_from_tree(
             tree=tree,
@@ -510,12 +640,17 @@ def compute_window_entropy_signal(
             plan=plan,
         )
 
-    return _compute_window_entropy_signal_naive(
+    source_mats = _get_inter_transition_matrices(
+        net=net,
+        lamda=lamda,
+        use_linear_approx=use_linear_approx,
+        lin_t_s=lin_t_s,
+    )
+    return _compute_window_entropy_signal_direct(
+        source_mats=source_mats,
         prepared=prepared,
         lamda=lamda,
         plan=plan,
-        use_linear_approx=use_linear_approx,
-        lin_t_s=lin_t_s,
     )
 
 
@@ -529,6 +664,7 @@ def compute_signals_for_lambda(
     use_linear_approx: bool = False,
     lin_t_s: int = 10,
     window_backend: str = "auto",
+    reverse_time: bool = False,
 ) -> dict[float, dict[str, Any]]:
     """
     Compute entropy signals for all windows associated with one lambda value.
@@ -545,6 +681,7 @@ def compute_signals_for_lambda(
         windows=windows,
         sample_fraction=sample_fraction,
         p0=p0,
+        reverse_time=reverse_time,
     )
     return compute_signals_for_lambda_prepared(
         prepared=prepared,
@@ -559,25 +696,53 @@ def compute_signals_for_lambda(
 # Optional persistence helpers
 # -----------------------------------------------------------------------------
 
-def get_signal_result_filename(lamda: float, window: float, suffix: str = ".pkl") -> str:
+def get_signal_result_filename(
+    lamda: float,
+    window: float,
+    suffix: str = ".pkl",
+    reverse_time: bool = False,
+) -> str:
     """
     Return the canonical filename for one saved entropy signal.
     """
-    return f"signal_lamda_{float(lamda):.11f}_window_{float(window):g}{suffix}"
+    direction_suffix = "_rev" if reverse_time else ""
+    return (
+        f"signal_lamda_{float(lamda):.11f}"
+        f"_window_{float(window):g}{direction_suffix}{suffix}"
+    )
 
 
-def get_signal_result_path(outdir: str | Path, lamda: float, window: float) -> Path:
+def get_signal_result_path(
+    outdir: str | Path,
+    lamda: float,
+    window: float,
+    reverse_time: bool = False,
+) -> Path:
     """
     Return the full path for one saved entropy signal inside a sample folder.
     """
-    return Path(outdir) / get_signal_result_filename(lamda=lamda, window=window)
+    return Path(outdir) / get_signal_result_filename(
+        lamda=lamda,
+        window=window,
+        reverse_time=reverse_time,
+    )
 
 
-def load_signal_result(outdir: str | Path, lamda: float, window: float) -> dict[str, Any]:
+def load_signal_result(
+    outdir: str | Path,
+    lamda: float,
+    window: float,
+    reverse_time: bool = False,
+) -> dict[str, Any]:
     """
     Load one saved entropy signal from a sample folder.
     """
-    filepath = get_signal_result_path(outdir=outdir, lamda=lamda, window=window)
+    filepath = get_signal_result_path(
+        outdir=outdir,
+        lamda=lamda,
+        window=window,
+        reverse_time=reverse_time,
+    )
     with open(filepath, "rb") as handle:
         return pickle.load(handle)
 
@@ -591,7 +756,13 @@ def save_signal_result(result: dict[str, Any], outdir: str | Path) -> Path:
 
     lamda = float(result["lamda"])
     window = float(result["window"])
-    outfile = get_signal_result_path(outdir=outdir, lamda=lamda, window=window)
+    reverse_time = bool(result.get("reverse_time", False))
+    outfile = get_signal_result_path(
+        outdir=outdir,
+        lamda=lamda,
+        window=window,
+        reverse_time=reverse_time,
+    )
     with open(outfile, "wb") as f:
         pickle.dump(result, f)
     return outfile

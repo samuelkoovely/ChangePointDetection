@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import os
 import pickle
 import time
@@ -13,6 +14,7 @@ from TemporalNetwork import ContTempNetwork
 from signal_generation import (
     PreparedSignalSample,
     WindowSamplingPlan,
+    build_window_sampling_plan,
     compute_signals_for_lambdas_prepared,
 )
 
@@ -29,6 +31,18 @@ WINDOWS_SECONDS = [60 * minutes for minutes in WINDOWS_MINUTES]
 # its own prepared copy and processes a subset of lambdas sequentially.
 BACKEND = "loky"
 N_JOBS = min(4, len(LAMBDAS), os.cpu_count() or 1)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Compute primary-school entropy curves for day 1."
+    )
+    parser.add_argument(
+        "--reverse-time",
+        action="store_true",
+        help="Compute backward entropy curves instead of forward ones.",
+    )
+    return parser.parse_args()
 
 
 def load_primary_school_day1_network(
@@ -79,6 +93,7 @@ def load_primary_school_day1_network(
 def prepare_full_window_sample(
     net: ContTempNetwork,
     windows_seconds: Sequence[float] = WINDOWS_SECONDS,
+    reverse_time: bool = False,
 ) -> PreparedSignalSample:
     """
     Prepare a full-scan sample context for the selected windows.
@@ -97,32 +112,18 @@ def prepare_full_window_sample(
 
     window_plans: dict[float, WindowSamplingPlan] = {}
     for window in windows:
-        considered_times = net.times[net.times < net.times[-1] - window]
-        M = len(considered_times)
-
-        if M <= 0:
-            k_samples = np.array([], dtype=int)
-            t_samples = np.array([], dtype=float)
-            window_ends = np.array([], dtype=np.int64)
-        else:
-            k_samples = np.arange(M, dtype=int)
-            t_samples = np.asarray(net.times[k_samples], dtype=float)
-            window_ends = np.asarray(
-                net._get_window_ends_vectorized(window, n_windows=M),
-                dtype=np.int64,
-            )
-
-        window_plans[window] = WindowSamplingPlan(
+        window_plans[window] = build_window_sampling_plan(
+            net=net,
             window=window,
-            k_samples=k_samples,
-            t_samples=t_samples,
-            window_ends=window_ends,
+            reverse_time=reverse_time,
+            full_scan=True,
         )
 
     return PreparedSignalSample(
         net=net,
         windows=windows,
         sample_fraction=1.0,
+        reverse_time=bool(reverse_time),
         p0=p0,
         window_plans=window_plans,
     )
@@ -140,10 +141,12 @@ def save_lambda_block_results(
     signals_by_lambda: dict[float, dict[float, dict]],
     output_base: Path,
     day1_stop_time: float,
+    reverse_time: bool = False,
 ) -> None:
     """
     Save all signal results in the primary-school day-1 layout.
     """
+    signal_subdir = "window_S_selected_rev" if reverse_time else "window_S_selected"
     for lamda, window_results in signals_by_lambda.items():
         lamda_key = f"{float(lamda):.11f}"
         for window_seconds, signal_result in window_results.items():
@@ -159,11 +162,16 @@ def save_lambda_block_results(
                 # for older primary-school plotting scripts.
                 "signal_array": np.asarray(signal_result["signal"], dtype=float),
                 "signal": {lamda_key: np.asarray(signal_result["signal"], dtype=float)},
+                "reverse_time": bool(signal_result.get("reverse_time", reverse_time)),
+                "direction": signal_result.get(
+                    "direction",
+                    "backward" if reverse_time else "forward",
+                ),
                 "day_stop_index": DAY1_STOP_INDEX,
                 "day_stop_time_reference": float(day1_stop_time),
             }
 
-            outdir = output_base / "window_S_selected" / str(int(window_seconds))
+            outdir = output_base / signal_subdir / str(int(window_seconds))
             outdir.mkdir(parents=True, exist_ok=True)
             outfile = outdir / f"window_S{lamda_key}"
             with open(outfile, "wb") as handle:
@@ -175,6 +183,7 @@ def worker(
     lamda_block: Sequence[float],
     output_base: Path,
     day1_stop_time: float,
+    reverse_time: bool = False,
 ) -> list[float]:
     """
     Process one lambda block for the prepared primary-school day-1 sample.
@@ -191,12 +200,16 @@ def worker(
             signals_by_lambda=signals_by_lambda,
             output_base=output_base,
             day1_stop_time=day1_stop_time,
+            reverse_time=reverse_time,
         )
     except Exception as exc:
         for lamda in lamda_block:
             lamda_key = f"{float(lamda):.11f}"
             for window_seconds in prepared.windows:
-                outdir = output_base / "window_S_selected" / str(int(window_seconds))
+                signal_subdir = (
+                    "window_S_selected_rev" if reverse_time else "window_S_selected"
+                )
+                outdir = output_base / signal_subdir / str(int(window_seconds))
                 outdir.mkdir(parents=True, exist_ok=True)
                 outfile = outdir / f"window_S{lamda_key}"
                 error_payload = {
@@ -206,6 +219,8 @@ def worker(
                     "window_seconds": float(window_seconds),
                     "window_minutes": float(window_seconds) / 60.0,
                     "signal": 10,
+                    "reverse_time": bool(reverse_time),
+                    "direction": "backward" if reverse_time else "forward",
                     "error": f"{type(exc).__name__}: {exc}",
                     "day_stop_index": DAY1_STOP_INDEX,
                     "day_stop_time_reference": float(day1_stop_time),
@@ -224,6 +239,7 @@ def save_metadata(
     network_path: str,
     prepared: PreparedSignalSample,
     day1_stop_time: float,
+    reverse_time: bool = False,
     elapsed_seconds: float | None = None,
 ) -> None:
     """
@@ -243,6 +259,8 @@ def save_metadata(
         "windows_minutes": np.asarray(WINDOWS_MINUTES, dtype=float),
         "backend": BACKEND,
         "n_jobs": int(N_JOBS),
+        "reverse_time": bool(reverse_time),
+        "direction": "backward" if reverse_time else "forward",
         "window_backend": "segment_tree",
         "elapsed_seconds": elapsed_seconds,
     }
@@ -252,15 +270,22 @@ def save_metadata(
 
 
 def main() -> None:
+    args = parse_args()
     network_path = PRIMARY_SCHOOL_PATH
     day1_net, day1_stop_time = load_primary_school_day1_network(network_path)
-    prepared = prepare_full_window_sample(day1_net, windows_seconds=WINDOWS_SECONDS)
+    reverse_time = bool(args.reverse_time)
+    prepared = prepare_full_window_sample(
+        day1_net,
+        windows_seconds=WINDOWS_SECONDS,
+        reverse_time=reverse_time,
+    )
 
     save_metadata(
         output_base=OUTPUT_BASE,
         network_path=network_path,
         prepared=prepared,
         day1_stop_time=day1_stop_time,
+        reverse_time=reverse_time,
     )
 
     blocks = lambda_blocks(LAMBDAS, N_JOBS)
@@ -272,6 +297,7 @@ def main() -> None:
             lamda_block=blocks[0],
             output_base=OUTPUT_BASE,
             day1_stop_time=day1_stop_time,
+            reverse_time=reverse_time,
         )
     else:
         Parallel(n_jobs=len(blocks), backend=BACKEND)(
@@ -280,6 +306,7 @@ def main() -> None:
                 lamda_block=block,
                 output_base=OUTPUT_BASE,
                 day1_stop_time=day1_stop_time,
+                reverse_time=reverse_time,
             )
             for block in blocks
         )
@@ -290,6 +317,7 @@ def main() -> None:
         network_path=network_path,
         prepared=prepared,
         day1_stop_time=day1_stop_time,
+        reverse_time=reverse_time,
         elapsed_seconds=elapsed,
     )
 

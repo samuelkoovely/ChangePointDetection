@@ -156,6 +156,7 @@ def compute_and_store_signals_for_sample(
     save_signals: bool = False,
     signals_outdir: str | Path | None = None,
     window_backend: str = "auto",
+    reverse_time: bool = False,
 ) -> dict:
     """
     Compute and optionally store all signals associated with one sample.
@@ -171,6 +172,7 @@ def compute_and_store_signals_for_sample(
         windows=windows,
         sample_fraction=sample_fraction,
         p0=p0,
+        reverse_time=reverse_time,
     )
     signals_by_lambda = compute_signals_for_lambdas_prepared(
         prepared=prepared,
@@ -192,6 +194,7 @@ def compute_and_store_signals_for_sample(
         "sample_idx": int(sample_idx),
         "sample_name": sample_name,
         "signals_by_lambda": signals_by_lambda,
+        "reverse_time": bool(reverse_time),
     }
 
 
