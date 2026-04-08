@@ -1,17 +1,120 @@
-import numpy as np
+from pathlib import Path
 import pickle
+
 import matplotlib.pyplot as plt
-from matplotlib import cm
-import auxiliary_functions
+import numpy as np
+from matplotlib import colormaps
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
+import auxiliary_functions
 
-with open('data/merge_merge.pkl', 'rb') as handle:
-    merge_merge = pickle.load(handle)
-with open('data/merge_split.pkl', 'rb') as handle:
-    merge_split = pickle.load(handle)
-with open('data/split_merge.pkl', 'rb') as handle:
-    split_merge = pickle.load(handle)
+
+RESULTS_BASE_CANDIDATES = (
+    Path("gridsearch_results/motifs_global"),
+    Path("gridsearch_results/motifs_global_f"),
+    Path("gridsearch_results/motifs_global_b"),
+)
+OUTPUT_PATH = Path("./figures/fig_global_entropy.pdf")
+MOTIF_NAMES = ("merge_merge", "merge_split", "split_merge")
+DEFAULT_CURVE_INDICES = [5, 6, 7, 8]
+BACKWARD_CURVE_STYLE = {
+    "color": "red",
+    "linewidth": 1.8,
+    "zorder": 6,
+}
+
+
+def signal_subdir(reverse_time):
+    return "global_S_rev" if reverse_time else "global_S"
+
+
+def signal_filename(lamda):
+    return f"global_S{float(lamda):.11f}"
+
+
+def direction_metadata_filename(reverse_time):
+    return f"metadata_{'backward' if reverse_time else 'forward'}.pkl"
+
+
+def resolve_results_base_for_direction(reverse_time, allow_missing=False):
+    expected_subdir = signal_subdir(reverse_time)
+    expected_metadata = direction_metadata_filename(reverse_time)
+
+    for candidate in RESULTS_BASE_CANDIDATES:
+        if not candidate.exists():
+            continue
+        if all(
+            (candidate / motif_name / expected_subdir).exists()
+            and (
+                (candidate / motif_name / expected_metadata).exists()
+                or (candidate / motif_name / "metadata.pkl").exists()
+            )
+            for motif_name in MOTIF_NAMES
+        ):
+            return candidate
+
+    if allow_missing:
+        return None
+
+    raise FileNotFoundError(
+        f"Could not find {'backward' if reverse_time else 'forward'} global motif results. "
+        "Checked: "
+        + ", ".join(str(candidate) for candidate in RESULTS_BASE_CANDIDATES)
+    )
+
+
+FORWARD_RESULTS_BASE = resolve_results_base_for_direction(reverse_time=False)
+BACKWARD_RESULTS_BASE = resolve_results_base_for_direction(
+    reverse_time=True,
+    allow_missing=True,
+)
+
+
+def load_pickle(path):
+    with path.open("rb") as handle:
+        return pickle.load(handle)
+
+
+def load_metadata(motif_name, results_base, reverse_time=False):
+    motif_dir = results_base / motif_name
+    candidates = (
+        motif_dir / direction_metadata_filename(reverse_time),
+        motif_dir / "metadata.pkl",
+    )
+    for path in candidates:
+        if path.exists():
+            return load_pickle(path)
+    raise FileNotFoundError(f"Could not find metadata for {motif_name} in {motif_dir}")
+
+
+def metadata_lambdas(metadata, reverse_time=False):
+    direction_key = "backward_lambdas" if reverse_time else "forward_lambdas"
+    if direction_key in metadata:
+        return np.asarray(metadata[direction_key], dtype=float)
+
+    if "lambdas" in metadata:
+        metadata_reverse_time = metadata.get("reverse_time")
+        if metadata_reverse_time is None or bool(metadata_reverse_time) == bool(reverse_time):
+            return np.asarray(metadata["lambdas"], dtype=float)
+
+    raise KeyError(
+        f"Metadata does not contain {'backward' if reverse_time else 'forward'} lambdas."
+    )
+
+
+def load_networks():
+    networks = {}
+    results_base = FORWARD_RESULTS_BASE if FORWARD_RESULTS_BASE is not None else BACKWARD_RESULTS_BASE
+    reverse_time = False if FORWARD_RESULTS_BASE is not None else True
+
+    for motif_name in MOTIF_NAMES:
+        metadata = load_metadata(
+            motif_name,
+            results_base=results_base,
+            reverse_time=reverse_time,
+        )
+        networks[motif_name] = load_pickle(Path(metadata["network_path"]))
+    return networks
 
 
 def compute_interval_matrices(network, intervals):
@@ -21,33 +124,84 @@ def compute_interval_matrices(network, intervals):
     ]
 
 
-def load_entropy_curves(base_dir, lamdas, subdir="S"):
+def extract_signal_array(payload, lamda):
+    if "signal_array" in payload:
+        return np.asarray(payload["signal_array"], dtype=float)
+
+    signal = payload["signal"]
+    if isinstance(signal, dict):
+        return np.asarray(signal[f"{float(lamda):.11f}"], dtype=float)
+
+    return np.asarray(signal, dtype=float)
+
+
+def load_entropy_curves(motif_name, results_base, reverse_time=False):
+    metadata = load_metadata(
+        motif_name,
+        results_base=results_base,
+        reverse_time=reverse_time,
+    )
+    lambdas = np.sort(metadata_lambdas(metadata, reverse_time=reverse_time))
+    curve_dir = results_base / motif_name / signal_subdir(reverse_time)
+
     curves = []
-    for lamda in lamdas:
-        lamda_str = f"{lamda:.11f}"
-        filepath = f"//scratch/tmp/180/skoove/{base_dir}/{subdir}/S{lamda_str}"
-        with open(filepath, 'rb') as f:
-            data = pickle.load(f)
-        curves.append(data['S'][lamda_str])
+    for lamda in lambdas:
+        filepath = curve_dir / signal_filename(lamda)
+        data = load_pickle(filepath)
+        curves.append(
+            [
+                np.asarray(data["t_samples"], dtype=float),
+                extract_signal_array(data, lamda=lamda),
+            ]
+        )
     return curves
 
 
+def select_curves(curves, curve_indices):
+    if curve_indices is None:
+        return curves
+    if len(curves) == 0:
+        return []
+    if max(curve_indices, default=-1) >= len(curves):
+        return curves
+    return [curves[idx] for idx in curve_indices]
+
+
+def select_single_curve(curves, preferred_index):
+    if len(curves) == 0:
+        return None
+    if preferred_index is None:
+        return curves[-1]
+    safe_index = min(max(int(preferred_index), 0), len(curves) - 1)
+    return curves[safe_index]
+
+
 def make_inset_cmap():
-    cmap = cm.get_cmap('inferno').copy()
-    cmap.set_bad(color='white')
+    cmap = colormaps["inferno"].copy()
+    cmap.set_bad(color="white")
     return cmap
 
 
-def plot_network_panel(ax, network, forward_curves, backward_curve, matrices, panel_title,
-                       curve_indices, forward_colors, time_intervals, inset_positions, inset_cmap):
-    for color_idx, curve_idx in enumerate(curve_indices):
-        ax.plot(network.times, forward_curves[curve_idx], color=forward_colors[color_idx], alpha=1)
+def plot_network_panel(
+    ax,
+    forward_curves,
+    matrices,
+    panel_title,
+    forward_colors,
+    time_intervals,
+    inset_positions,
+    inset_cmap,
+    backward_curve=None,
+):
+    for color, curve in zip(forward_colors, forward_curves):
+        ax.plot(curve[0], curve[1], color=color, alpha=1)
 
-    ax.plot(network.times[::-1], backward_curve, '--', color='black', alpha=1)
+    if backward_curve is not None:
+        ax.plot(backward_curve[0], backward_curve[1], **BACKWARD_CURVE_STYLE)
 
     ax.set_xlim(-5, 310)
     ax.set_xlabel("t [s]")
-    ax.set_title(panel_title, loc='left', fontsize=14)
+    ax.set_title(panel_title, loc="left", fontsize=14)
 
     for matrix, pos, (start, end) in zip(matrices, inset_positions, time_intervals):
         inset_ax = inset_axes(
@@ -65,96 +219,94 @@ def plot_network_panel(ax, network, forward_curves, backward_curve, matrices, pa
         inset_ax.matshow(
             masked_matrix,
             cmap=inset_cmap,
-            aspect='equal',
+            aspect="equal",
             vmin=0,
             vmax=vmax,
-            interpolation='nearest',
+            interpolation="nearest",
         )
-        inset_ax.set_facecolor('white')
+        inset_ax.set_facecolor("white")
         inset_ax.set_xticks([])
         inset_ax.set_yticks([])
         inset_ax.set_title(f"{start} ≤ t < {end}", fontsize=8)
         for spine in inset_ax.spines.values():
             spine.set_visible(True)
             spine.set_linewidth(0.8)
-            spine.set_edgecolor('black')
+            spine.set_edgecolor("black")
 
 
-networks = {
-    'merge_merge': merge_merge,
-    'merge_split': merge_split,
-    'split_merge': split_merge,
-}
+def main():
+    networks = load_networks()
+    panel_specs = [
+        {"key": "merge_merge", "title": "(A)", "backward_index": 7},
+        {"key": "merge_split", "title": "(B)", "backward_index": 5},
+        {"key": "split_merge", "title": "(C)", "backward_index": 6},
+    ]
+    inset_positions = [0.06, 0.37, 0.68]
+    time_intervals = [(0, 100), (100, 200), (200, 300)]
 
-panel_specs = [
-    {
-        'key': 'merge_merge',
-        'title': '(A)',
-        'backward_index': 7,
-    },
-    {
-        'key': 'merge_split',
-        'title': '(B)',
-        'backward_index': 5,
-    },
-    {
-        'key': 'split_merge',
-        'title': '(C)',
-        'backward_index': 6,
-    },
-]
-
-curve_indices = [5, 6, 7, 8]
-inset_positions = [0.06, 0.37, 0.68]
-
-time_intervals = [(0, 100), (100, 200), (200, 300)]
-
-lamdas = np.logspace(-4,-1,10)
-
-interval_matrices = {
-    key: compute_interval_matrices(network, time_intervals)
-    for key, network in networks.items()
-}
-
-forward_entropy = {
-    key: load_entropy_curves(key, lamdas, subdir='S')
-    for key in networks
-}
-
-backward_entropy = {
-    key: load_entropy_curves(key, lamdas, subdir='S_rev')
-    for key in networks
-}
-
-fig = plt.figure(figsize=(12, 4))
-gs = fig.add_gridspec(1, 3)
-axes = gs.subplots(sharey=True)
-
-color = auxiliary_functions.generate_plasma_colors(len(curve_indices))
-inset_cmap = make_inset_cmap()
-
-for ax, spec in zip(np.atleast_1d(axes), panel_specs):
-    key = spec['key']
-    plot_network_panel(
-        ax=ax,
-        network=networks[key],
-        forward_curves=forward_entropy[key],
-        backward_curve=backward_entropy[key][spec['backward_index']],
-        matrices=interval_matrices[key],
-        panel_title=spec['title'],
-        curve_indices=curve_indices,
-        forward_colors=color,
-        time_intervals=time_intervals,
-        inset_positions=inset_positions,
-        inset_cmap=inset_cmap,
+    interval_matrices = {
+        key: compute_interval_matrices(network, time_intervals)
+        for key, network in networks.items()
+    }
+    forward_entropy = {
+        key: load_entropy_curves(
+            key,
+            results_base=FORWARD_RESULTS_BASE,
+            reverse_time=False,
+        )
+        for key in networks
+    }
+    backward_entropy = (
+        {
+            key: load_entropy_curves(
+                key,
+                results_base=BACKWARD_RESULTS_BASE,
+                reverse_time=True,
+            )
+            for key in networks
+        }
+        if BACKWARD_RESULTS_BASE is not None
+        else {}
     )
 
-axes = np.atleast_1d(axes)
-axes[0].set_ylabel("Entropy")
-for ax in axes[1:]:
-    ax.tick_params(labelleft=False)
+    fig = plt.figure(figsize=(12, 4))
+    gs = fig.add_gridspec(1, 3)
+    axes = np.atleast_1d(gs.subplots(sharey=True))
+    inset_cmap = make_inset_cmap()
 
-# Adjust layout and display
-plt.tight_layout()
-plt.savefig('/home/b/skoove/Desktop/ChangePointDetection/fig_global_entropy.pdf', format='pdf', dpi=300, bbox_inches='tight')
-plt.show()
+    for ax, spec in zip(axes, panel_specs):
+        key = spec["key"]
+        selected_curves = select_curves(
+            forward_entropy[key],
+            curve_indices=DEFAULT_CURVE_INDICES,
+        )
+        backward_curve = select_single_curve(
+            backward_entropy.get(key, []),
+            preferred_index=spec.get("backward_index"),
+        )
+        colors = auxiliary_functions.generate_plasma_colors(len(selected_curves))
+        plot_network_panel(
+            ax=ax,
+            forward_curves=selected_curves,
+            matrices=interval_matrices[key],
+            panel_title=spec["title"],
+            forward_colors=colors,
+            time_intervals=time_intervals,
+            inset_positions=inset_positions,
+            inset_cmap=inset_cmap,
+            backward_curve=backward_curve,
+        )
+
+    axes[0].set_ylabel("Entropy")
+    for ax in axes[1:]:
+        ax.tick_params(labelleft=False)
+
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(OUTPUT_PATH, format="pdf", dpi=300, bbox_inches="tight")
+    if "agg" not in plt.get_backend().lower():
+        plt.show()
+
+
+if __name__ == "__main__":
+    main()
