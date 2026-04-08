@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import colormaps
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from scipy.sparse.csgraph import connected_components
 
 import auxiliary_functions
 
@@ -22,6 +23,13 @@ BACKWARD_CURVE_STYLE = {
     "linewidth": 1.8,
     "zorder": 6,
 }
+LIMIT_STYLE = {
+    "color": "black",
+    "linestyle": "--",
+    "linewidth": 1.8,
+    "zorder": 5,
+}
+GLOBAL_LIMIT_START_TIME = 0.0
 
 
 def signal_subdir(reverse_time):
@@ -124,6 +132,96 @@ def compute_interval_matrices(network, intervals):
     ]
 
 
+def limit_payload_path(motif_name):
+    return (
+        FORWARD_RESULTS_BASE
+        / motif_name
+        / "global_limit_selected"
+        / "global_limit.pkl"
+    )
+
+
+def compute_component_log_sum(network, end_time):
+    adjacency = network.compute_static_adjacency_matrix(
+        start_time=float(GLOBAL_LIMIT_START_TIME),
+        end_time=float(end_time),
+    ).tocsr()
+
+    n_components, labels = connected_components(
+        adjacency,
+        directed=False,
+        return_labels=True,
+    )
+    component_sizes = np.bincount(labels, minlength=n_components).astype(float)
+    weights = component_sizes / float(network.num_nodes)
+    return float(np.sum(weights * np.log(component_sizes)))
+
+
+def compute_global_limit_payload(network, motif_name):
+    t_samples = np.asarray(network.times[:-1], dtype=float)
+    k_samples = np.arange(len(t_samples), dtype=int)
+    values = np.empty(len(t_samples), dtype=float)
+
+    for idx, end_time in enumerate(t_samples):
+        values[idx] = compute_component_log_sum(
+            network=network,
+            end_time=float(end_time),
+        )
+        if (idx + 1) % 250 == 0 or idx + 1 == len(t_samples):
+            print(
+                f"{motif_name} global limit: "
+                f"{idx + 1}/{len(t_samples)} samples"
+            )
+
+    time_limit_array = (
+        np.column_stack((t_samples, values))
+        if len(t_samples) > 0
+        else np.empty((0, 2), dtype=float)
+    )
+
+    return {
+        "motif_name": motif_name,
+        "start_time": float(GLOBAL_LIMIT_START_TIME),
+        "k_samples": k_samples,
+        "t_samples": t_samples,
+        "component_log_sums": values,
+        "signal": values,
+        "signal_array": values,
+        "time_component_log_sums": time_limit_array,
+        "statistic": (
+            "sum((size / N) * log(size)) over connected components of the "
+            "aggregated graph on [0, t]"
+        ),
+    }
+
+
+def load_or_compute_limit_payload(motif_name, network):
+    payload_path = limit_payload_path(motif_name)
+    if payload_path.exists():
+        return load_pickle(payload_path)
+
+    payload = compute_global_limit_payload(
+        network=network,
+        motif_name=motif_name,
+    )
+    payload_path.parent.mkdir(parents=True, exist_ok=True)
+    with payload_path.open("wb") as handle:
+        pickle.dump(payload, handle)
+    return payload
+
+
+def extract_limit_array(payload):
+    if "time_component_log_sums" in payload:
+        return np.asarray(payload["time_component_log_sums"], dtype=float)
+
+    return np.column_stack(
+        (
+            np.asarray(payload["t_samples"], dtype=float),
+            np.asarray(payload["signal_array"], dtype=float),
+        )
+    )
+
+
 def extract_signal_array(payload, lamda):
     if "signal_array" in payload:
         return np.asarray(payload["signal_array"], dtype=float)
@@ -192,12 +290,16 @@ def plot_network_panel(
     inset_positions,
     inset_cmap,
     backward_curve=None,
+    limit_curve=None,
 ):
     for color, curve in zip(forward_colors, forward_curves):
         ax.plot(curve[0], curve[1], color=color, alpha=1)
 
     if backward_curve is not None:
         ax.plot(backward_curve[0], backward_curve[1], **BACKWARD_CURVE_STYLE)
+
+    if limit_curve is not None:
+        ax.plot(limit_curve[:, 0], limit_curve[:, 1], **LIMIT_STYLE)
 
     ax.set_xlim(-5, 310)
     ax.set_ylim(-2, 5)
@@ -269,6 +371,15 @@ def main():
         if BACKWARD_RESULTS_BASE is not None
         else {}
     )
+    limit_curves = {
+        key: extract_limit_array(
+            load_or_compute_limit_payload(
+                motif_name=key,
+                network=networks[key],
+            )
+        )
+        for key in networks
+    }
 
     fig = plt.figure(figsize=(12, 4))
     gs = fig.add_gridspec(1, 3)
@@ -296,6 +407,7 @@ def main():
             inset_positions=inset_positions,
             inset_cmap=inset_cmap,
             backward_curve=backward_curve,
+            limit_curve=limit_curves.get(key),
         )
 
     axes[0].set_ylabel("Entropy")
