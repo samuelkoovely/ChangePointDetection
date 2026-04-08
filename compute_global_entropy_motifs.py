@@ -9,7 +9,9 @@ from typing import Any, Sequence
 
 import numpy as np
 from joblib import Parallel, delayed
+from scipy.sparse import isspmatrix_csr
 
+from SparseStochMat import inplace_csr_row_normalize
 from compute_S_rate import conditional_entropy_of_T
 from signal_generation import compute_inter_transition_matrices_for_lambda, ensure_laplacians
 
@@ -99,6 +101,12 @@ def copy_matrix(matrix):
     return np.array(matrix, copy=True)
 
 
+def ensure_csr(matrix):
+    if not isspmatrix_csr(matrix):
+        return matrix.tocsr()
+    return matrix
+
+
 def global_time_samples(net: Any, num_steps: int) -> np.ndarray:
     return np.asarray(net.times[:num_steps], dtype=float)
 
@@ -119,16 +127,18 @@ def compute_global_entropy_curve(
     if num_steps == 0:
         values = np.array([], dtype=float)
     elif reverse_time:
-        cumulative = copy_matrix(source_mats[-1])
+        cumulative = ensure_csr(copy_matrix(source_mats[-1]))
         values[-1] = conditional_entropy_of_T(cumulative, p0)
         for idx in range(num_steps - 2, -1, -1):
-            cumulative = cumulative @ source_mats[idx]
+            cumulative = ensure_csr(cumulative @ source_mats[idx])
+            inplace_csr_row_normalize(cumulative)
             values[idx] = conditional_entropy_of_T(cumulative, p0)
     else:
-        cumulative = copy_matrix(source_mats[0])
+        cumulative = ensure_csr(copy_matrix(source_mats[0]))
         values[0] = conditional_entropy_of_T(cumulative, p0)
         for idx in range(1, num_steps):
-            cumulative = cumulative @ source_mats[idx]
+            cumulative = ensure_csr(cumulative @ source_mats[idx])
+            inplace_csr_row_normalize(cumulative)
             values[idx] = conditional_entropy_of_T(cumulative, p0)
 
     return {
