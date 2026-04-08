@@ -200,6 +200,7 @@ def plot_network_panel(
         ax.plot(backward_curve[0], backward_curve[1], **BACKWARD_CURVE_STYLE)
 
     ax.set_xlim(-5, 310)
+    ax.set_ylim(-2, 5)
     ax.set_xlabel("t [s]")
     ax.set_title(panel_title, loc="left", fontsize=14)
 
@@ -238,8 +239,8 @@ def main():
     networks = load_networks()
     panel_specs = [
         {"key": "merge_merge", "title": "(A)", "backward_index": 7},
-        {"key": "merge_split", "title": "(B)", "backward_index": 5},
-        {"key": "split_merge", "title": "(C)", "backward_index": 6},
+        {"key": "merge_split", "title": "(B)", "backward_index": 7},
+        {"key": "split_merge", "title": "(C)", "backward_index": 7},
     ]
     inset_positions = [0.06, 0.37, 0.68]
     time_intervals = [(0, 100), (100, 200), (200, 300)]
