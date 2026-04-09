@@ -1,5 +1,8 @@
-from pathlib import Path
+from __future__ import annotations
+
+import argparse
 import pickle
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,16 +12,17 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from scipy.sparse.csgraph import connected_components
 
 import auxiliary_functions
+from signal_generation import compute_signals_for_lambdas_prepared, prepare_signal_sample
 
 
 RESULTS_BASE_CANDIDATES = (
-    Path("gridsearch_results/motifs"),
     Path("gridsearch_results/motifs_f"),
+    Path("gridsearch_results/motifs"),
     Path("gridsearch_results/motifs_run1"),
     Path("gridsearch_results/motifs_b"),
 )
-WINDOW = 5.0
-OUTPUT_PATH = Path("./figures/fig_local_entropy.pdf")
+DEFAULT_WINDOWS = [1.0, 5.0, 10.0]
+DEFAULT_OUTPUT_DIR = Path("./figures")
 MOTIF_NAMES = ("merge_merge", "merge_split", "split_merge")
 DEFAULT_CURVE_INDICES = [5, 6, 7, 8]
 LIMIT_STYLE = {
@@ -34,23 +38,79 @@ BACKWARD_CURVE_STYLE = {
 }
 
 
-def format_lambda_label(lamda):
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Plot local motif entropy for one or more window lengths. Missing "
+            "window signals are computed on demand."
+        )
+    )
+    parser.add_argument(
+        "--windows",
+        nargs="+",
+        type=float,
+        default=DEFAULT_WINDOWS,
+        help="Window lengths to render in seconds.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help="Directory where the output PDFs will be written.",
+    )
+    return parser.parse_args()
+
+
+def window_key(window: float) -> str:
+    return f"{float(window):g}"
+
+
+def format_lambda_label(lamda: float) -> str:
     return f"$\\lambda$ = {float(lamda):.2e}"
 
 
-def resolve_results_base_for_direction(reverse_time, allow_missing=False):
-    expected_subdir = "window_S_rev" if reverse_time else "window_S"
+def entropy_subdir(reverse_time: bool) -> str:
+    return "window_S_rev" if reverse_time else "window_S"
+
+
+def signal_filename(lamda: float) -> str:
+    return f"window_S{float(lamda):.11f}"
+
+
+def output_path_for_window(window: float, output_dir: Path, total_windows: int) -> Path:
+    if total_windows == 1:
+        return output_dir / "fig_local_entropy.pdf"
+    return output_dir / f"fig_local_entropy_window_{window_key(window)}.pdf"
+
+
+def load_pickle(path: Path):
+    with path.open("rb") as handle:
+        return pickle.load(handle)
+
+
+def load_metadata(motif_name: str, results_base: Path) -> dict:
+    return load_pickle(results_base / motif_name / "metadata.pkl")
+
+
+def resolve_results_base_for_direction(
+    reverse_time: bool,
+    allow_missing: bool = False,
+) -> Path | None:
+    expected_subdir = entropy_subdir(reverse_time)
+
     for candidate in RESULTS_BASE_CANDIDATES:
         if not candidate.exists():
             continue
         if all(
             (candidate / motif_name / "metadata.pkl").exists()
-            and (candidate / motif_name / expected_subdir / f"{float(WINDOW):g}").exists()
+            and (candidate / motif_name / expected_subdir).exists()
             for motif_name in MOTIF_NAMES
         ):
             return candidate
+
     if allow_missing:
         return None
+
     raise FileNotFoundError(
         f"Could not find {'backward' if reverse_time else 'forward'} motif results. "
         "Checked: "
@@ -58,26 +118,10 @@ def resolve_results_base_for_direction(reverse_time, allow_missing=False):
     )
 
 
-FORWARD_RESULTS_BASE = resolve_results_base_for_direction(reverse_time=False)
-BACKWARD_RESULTS_BASE = resolve_results_base_for_direction(
-    reverse_time=True,
-    allow_missing=True,
-)
-
-
-def load_pickle(path):
-    with path.open("rb") as handle:
-        return pickle.load(handle)
-
-
-def load_metadata(motif_name, results_base):
-    return load_pickle(results_base / motif_name / "metadata.pkl")
-
-
-def load_networks():
+def load_networks(results_base: Path) -> dict[str, object]:
     networks = {}
     for motif_name in MOTIF_NAMES:
-        metadata = load_metadata(motif_name, results_base=FORWARD_RESULTS_BASE)
+        metadata = load_metadata(motif_name, results_base=results_base)
         networks[motif_name] = load_pickle(Path(metadata["network_path"]))
     return networks
 
@@ -89,11 +133,7 @@ def compute_interval_matrices(network, intervals):
     ]
 
 
-def get_entropy_subdir(metadata):
-    return "window_S_rev" if metadata.get("reverse_time", False) else "window_S"
-
-
-def extract_signal_array(payload, lamda):
+def extract_signal_array(payload: dict, lamda: float) -> np.ndarray:
     if "signal_array" in payload:
         return np.asarray(payload["signal_array"], dtype=float)
 
@@ -104,19 +144,132 @@ def extract_signal_array(payload, lamda):
     return np.asarray(signal, dtype=float)
 
 
-def load_entropy_curves(motif_name, results_base, window=WINDOW, reverse_time=False):
-    metadata = load_metadata(motif_name, results_base=results_base)
-    lambdas = np.sort(np.asarray(metadata["lambdas"], dtype=float))
-    curve_dir = (
+def signal_payload_path(
+    motif_name: str,
+    results_base: Path,
+    window: float,
+    lamda: float,
+    reverse_time: bool = False,
+) -> Path:
+    return (
         results_base
         / motif_name
-        / ("window_S_rev" if reverse_time else "window_S")
-        / f"{float(window):g}"
+        / entropy_subdir(reverse_time)
+        / window_key(window)
+        / signal_filename(lamda)
+    )
+
+
+def save_window_signal_payload(signal_result: dict, motif_output_dir: Path) -> None:
+    lamda = float(signal_result["lamda"])
+    window = float(signal_result["window"])
+    lamda_key = f"{lamda:.11f}"
+    signal_array = np.asarray(signal_result["signal"], dtype=float)
+    reverse_time = bool(signal_result.get("reverse_time", False))
+
+    payload = {
+        "lamda": lamda_key,
+        "lamda_float": lamda,
+        "window": window,
+        "k_samples": np.asarray(signal_result["k_samples"], dtype=int),
+        "t_samples": np.asarray(signal_result["t_samples"], dtype=float),
+        "signal": signal_array,
+        "signal_array": signal_array,
+        "reverse_time": reverse_time,
+        "direction": signal_result.get(
+            "direction",
+            "backward" if reverse_time else "forward",
+        ),
+    }
+
+    outdir = motif_output_dir / entropy_subdir(reverse_time) / window_key(window)
+    outdir.mkdir(parents=True, exist_ok=True)
+    with (outdir / f"window_S{lamda_key}").open("wb") as handle:
+        pickle.dump(payload, handle)
+
+
+def ensure_entropy_curves(
+    motif_name: str,
+    results_base: Path,
+    window: float,
+    reverse_time: bool = False,
+    network=None,
+) -> np.ndarray:
+    metadata = load_metadata(motif_name, results_base=results_base)
+    lambdas = np.sort(np.asarray(metadata["lambdas"], dtype=float))
+    missing_lambdas = [
+        lamda
+        for lamda in lambdas
+        if not signal_payload_path(
+            motif_name=motif_name,
+            results_base=results_base,
+            window=window,
+            lamda=float(lamda),
+            reverse_time=reverse_time,
+        ).exists()
+    ]
+
+    if len(missing_lambdas) == 0:
+        return lambdas
+
+    if network is None:
+        network = load_pickle(Path(metadata["network_path"]))
+
+    print(
+        f"Computing {'backward' if reverse_time else 'forward'} local entropy for "
+        f"{motif_name}, window={window_key(window)}"
+    )
+    sample_fraction = float(metadata.get("sample_fraction", 1.0))
+    window_backend = metadata.get("window_backend", "segment_tree")
+    p0 = np.ones(network.num_nodes, dtype=float) / float(network.num_nodes)
+    prepared = prepare_signal_sample(
+        net=network,
+        windows=[float(window)],
+        sample_fraction=sample_fraction,
+        p0=p0,
+        reverse_time=reverse_time,
+    )
+    signals_by_lambda = compute_signals_for_lambdas_prepared(
+        prepared=prepared,
+        lambdas=lambdas,
+        use_linear_approx=False,
+        lin_t_s=10,
+        window_backend=window_backend,
+    )
+    motif_output_dir = results_base / motif_name
+    for window_results in signals_by_lambda.values():
+        save_window_signal_payload(
+            signal_result=window_results[float(window)],
+            motif_output_dir=motif_output_dir,
+        )
+
+    return lambdas
+
+
+def load_entropy_curves(
+    motif_name: str,
+    results_base: Path,
+    window: float,
+    reverse_time: bool = False,
+    network=None,
+) -> list[list[np.ndarray]]:
+    lambdas = ensure_entropy_curves(
+        motif_name=motif_name,
+        results_base=results_base,
+        window=window,
+        reverse_time=reverse_time,
+        network=network,
     )
 
     curves = []
     for lamda in lambdas:
-        filepath = curve_dir / f"window_S{lamda:.11f}"
+        filepath = signal_payload_path(
+            motif_name=motif_name,
+            results_base=results_base,
+            window=window,
+            lamda=float(lamda),
+            reverse_time=reverse_time,
+        )
         data = load_pickle(filepath)
         curves.append(
             [
@@ -127,17 +280,17 @@ def load_entropy_curves(motif_name, results_base, window=WINDOW, reverse_time=Fa
     return curves
 
 
-def limit_payload_path(motif_name, window=WINDOW):
+def limit_payload_path(motif_name: str, results_base: Path, window: float) -> Path:
     return (
-        FORWARD_RESULTS_BASE
+        results_base
         / motif_name
         / "window_limit_selected"
-        / f"{float(window):g}"
+        / window_key(window)
         / "window_limit.pkl"
     )
 
 
-def compute_component_log_sum(network, start_time, window_seconds):
+def compute_component_log_sum(network, start_time: float, window_seconds: float) -> float:
     adjacency = network.compute_static_adjacency_matrix(
         start_time=float(start_time),
         end_time=float(start_time) + float(window_seconds),
@@ -153,7 +306,7 @@ def compute_component_log_sum(network, start_time, window_seconds):
     return float(np.sum(weights * np.log(component_sizes)))
 
 
-def compute_window_limit_payload(network, motif_name, window=WINDOW):
+def compute_window_limit_payload(network, motif_name: str, window: float) -> dict:
     k_samples = np.flatnonzero(
         np.asarray(network.times, dtype=float) < network.times[-1] - float(window)
     ).astype(int)
@@ -168,7 +321,7 @@ def compute_window_limit_payload(network, motif_name, window=WINDOW):
         )
         if (idx + 1) % 250 == 0 or idx + 1 == len(t_samples):
             print(
-                f"{motif_name} limit, window={float(window):g}: "
+                f"{motif_name} limit, window={window_key(window)}: "
                 f"{idx + 1}/{len(t_samples)} samples"
             )
 
@@ -192,8 +345,17 @@ def compute_window_limit_payload(network, motif_name, window=WINDOW):
     }
 
 
-def load_or_compute_limit_payload(motif_name, network, window=WINDOW):
-    payload_path = limit_payload_path(motif_name, window=window)
+def load_or_compute_limit_payload(
+    motif_name: str,
+    network,
+    results_base: Path,
+    window: float,
+) -> dict:
+    payload_path = limit_payload_path(
+        motif_name=motif_name,
+        results_base=results_base,
+        window=window,
+    )
     if payload_path.exists():
         return load_pickle(payload_path)
 
@@ -208,7 +370,7 @@ def load_or_compute_limit_payload(motif_name, network, window=WINDOW):
     return payload
 
 
-def extract_limit_array(payload):
+def extract_limit_array(payload: dict) -> np.ndarray:
     if "time_component_log_sums" in payload:
         return np.asarray(payload["time_component_log_sums"], dtype=float)
 
@@ -312,8 +474,13 @@ def plot_network_panel(
             spine.set_edgecolor("black")
 
 
-def main():
-    networks = load_networks()
+def render_window_figure(
+    window: float,
+    forward_results_base: Path,
+    backward_results_base: Path | None,
+    output_path: Path,
+) -> None:
+    networks = load_networks(results_base=forward_results_base)
     panel_specs = [
         {"key": "merge_merge", "title": "(A)", "backward_index": 7},
         {"key": "merge_split", "title": "(B)", "backward_index": 5},
@@ -329,9 +496,10 @@ def main():
     forward_entropy = {
         key: load_entropy_curves(
             key,
-            results_base=FORWARD_RESULTS_BASE,
-            window=WINDOW,
+            results_base=forward_results_base,
+            window=window,
             reverse_time=False,
+            network=networks[key],
         )
         for key in networks
     }
@@ -339,13 +507,14 @@ def main():
         {
             key: load_entropy_curves(
                 key,
-                results_base=BACKWARD_RESULTS_BASE,
-                window=WINDOW,
+                results_base=backward_results_base,
+                window=window,
                 reverse_time=True,
+                network=networks[key],
             )
             for key in networks
         }
-        if BACKWARD_RESULTS_BASE is not None
+        if backward_results_base is not None
         else {}
     )
     limit_curves = {
@@ -353,7 +522,8 @@ def main():
             load_or_compute_limit_payload(
                 motif_name=key,
                 network=networks[key],
-                window=WINDOW,
+                results_base=forward_results_base,
+                window=window,
             )
         )
         for key in networks
@@ -362,14 +532,16 @@ def main():
     reference_motif = panel_specs[0]["key"]
     forward_reference_metadata = load_metadata(
         reference_motif,
-        results_base=FORWARD_RESULTS_BASE,
+        results_base=forward_results_base,
     )
-    forward_lambdas = np.sort(np.asarray(forward_reference_metadata["lambdas"], dtype=float))
+    forward_lambdas = np.sort(
+        np.asarray(forward_reference_metadata["lambdas"], dtype=float)
+    )
     selected_forward_lambdas = select_values(forward_lambdas, DEFAULT_CURVE_INDICES)
     forward_colors = auxiliary_functions.generate_plasma_colors(
         len(selected_forward_lambdas)
     )
-    legend_entry_count = len(selected_forward_lambdas) + 1 + 1
+    legend_entry_count = len(selected_forward_lambdas) + 2
     fig_width = max(12.0, 4.0 * len(panel_specs), 1.2 * legend_entry_count + 4.0)
 
     fig = plt.figure(figsize=(fig_width, 5.2))
@@ -408,7 +580,7 @@ def main():
         Line2D([0], [0], color=color, linewidth=1.8, label=format_lambda_label(lamda))
         for color, lamda in zip(forward_colors, selected_forward_lambdas)
     ]
-    if BACKWARD_RESULTS_BASE is not None:
+    if backward_results_base is not None:
         legend_handles.append(
             Line2D(
                 [0],
@@ -435,11 +607,37 @@ def main():
         ncol=len(legend_handles),
         fontsize="small",
     )
+    fig.suptitle(f"{window_key(window)} s window", fontsize=14, y=0.98)
 
-    fig.subplots_adjust(left=0.07, right=0.995, top=0.92, bottom=0.17, wspace=0.18)
-    fig.savefig(OUTPUT_PATH, format="pdf", dpi=300, bbox_inches="tight")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.subplots_adjust(left=0.07, right=0.995, top=0.88, bottom=0.17, wspace=0.18)
+    fig.savefig(output_path, format="pdf", dpi=300, bbox_inches="tight")
     if "agg" not in plt.get_backend().lower():
         plt.show()
+    plt.close(fig)
+
+
+def main() -> None:
+    args = parse_args()
+    windows = list(dict.fromkeys(float(window) for window in args.windows))
+
+    forward_results_base = resolve_results_base_for_direction(reverse_time=False)
+    backward_results_base = resolve_results_base_for_direction(
+        reverse_time=True,
+        allow_missing=True,
+    )
+
+    for window in windows:
+        render_window_figure(
+            window=window,
+            forward_results_base=forward_results_base,
+            backward_results_base=backward_results_base,
+            output_path=output_path_for_window(
+                window=window,
+                output_dir=args.output_dir,
+                total_windows=len(windows),
+            ),
+        )
 
 
 if __name__ == "__main__":

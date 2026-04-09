@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import argparse
 import pickle
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.sparse.csgraph import connected_components
 
 import auxiliary_functions
+from signal_generation import compute_signals_for_lambdas_prepared, prepare_signal_sample
 
 
+NETWORK_PATH = Path("./data/split_merge.pkl")
 SIGNAL_RESULTS_CANDIDATES = (
     Path("./gridsearch_results/motifs_f/split_merge"),
     Path("./gridsearch_results/motifs/split_merge"),
@@ -17,14 +21,62 @@ SIGNAL_RESULTS_CANDIDATES = (
 LIMIT_RESULTS_CANDIDATES = (
     Path("./gridsearch_results/split_merge_limit"),
 )
-DEFAULT_WINDOWS = [1.0, 3.0, 5.0]
+DEFAULT_WINDOWS = [1.0, 5.0, 10.0]
 DEFAULT_LAMBDAS = np.asarray([0.1, 1.0, 10.0], dtype=float)
 OUTPUT_PATH = Path("./figures/fig_gridsearch_split_merge_limit.pdf")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Plot local split-merge entropy curves against the connected-component "
+            "upper bound for one or more window lengths."
+        )
+    )
+    parser.add_argument(
+        "--signal-base",
+        type=Path,
+        default=None,
+        help=(
+            "Optional split-merge signal results directory. When omitted, the "
+            "script searches the standard locations."
+        ),
+    )
+    parser.add_argument(
+        "--limit-base",
+        type=Path,
+        default=None,
+        help=(
+            "Optional split-merge limit results directory. When omitted, the "
+            "script searches the standard locations."
+        ),
+    )
+    parser.add_argument(
+        "--windows",
+        nargs="+",
+        type=float,
+        default=DEFAULT_WINDOWS,
+        help="Window lengths to plot in seconds.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=OUTPUT_PATH,
+        help="Path to the output PDF.",
+    )
+    return parser.parse_args()
 
 
 def load_pickle(path: Path) -> dict:
     with path.open("rb") as handle:
         return pickle.load(handle)
+
+
+def load_split_merge_network(signal_metadata: dict | None = None):
+    network_path = NETWORK_PATH
+    if signal_metadata is not None and signal_metadata.get("network_path") is not None:
+        network_path = Path(signal_metadata["network_path"])
+    return load_pickle(Path(network_path))
 
 
 def window_key(window: float) -> str:
@@ -35,10 +87,18 @@ def window_key(window: float) -> str:
     return f"{float(window):g}"
 
 
-def resolve_signal_base() -> Path:
+def resolve_signal_base(requested_base: Path | None = None) -> Path:
     """
     Find the forward split-merge entropy results directory.
     """
+
+    if requested_base is not None:
+        metadata_path = requested_base / "metadata.pkl"
+        if metadata_path.exists() and (requested_base / "window_S").exists():
+            return requested_base
+        raise FileNotFoundError(
+            f"Explicit signal base {requested_base} is missing metadata.pkl or window_S."
+        )
 
     for candidate in SIGNAL_RESULTS_CANDIDATES:
         metadata_path = candidate / "metadata.pkl"
@@ -51,10 +111,17 @@ def resolve_signal_base() -> Path:
     )
 
 
-def resolve_limit_base(signal_base: Path) -> Path:
+def resolve_limit_base(signal_base: Path, requested_base: Path | None = None) -> Path:
     """
     Find the directory containing saved limit curves.
     """
+
+    if requested_base is not None:
+        if (requested_base / "window_limit_selected").exists():
+            return requested_base
+        raise FileNotFoundError(
+            f"Explicit limit base {requested_base} is missing window_limit_selected."
+        )
 
     candidates = [*LIMIT_RESULTS_CANDIDATES, signal_base]
 
@@ -96,10 +163,16 @@ def resolve_signal_subdir(signal_base: Path, signal_metadata: dict | None) -> st
     raise FileNotFoundError(f"Could not find signal subdirectory in {signal_base}")
 
 
-def get_windows(signal_metadata: dict | None) -> list[float]:
+def get_windows(
+    signal_metadata: dict | None,
+    requested_windows: list[float] | None = None,
+) -> list[float]:
     """
     Return the window lengths to plot.
     """
+
+    if requested_windows is not None:
+        return list(dict.fromkeys(float(window) for window in requested_windows))
 
     if signal_metadata is None:
         return list(DEFAULT_WINDOWS)
@@ -113,6 +186,35 @@ def get_windows(signal_metadata: dict | None) -> list[float]:
     return list(DEFAULT_WINDOWS)
 
 
+def save_window_signal_payload(signal_result: dict, signal_base: Path) -> None:
+    lamda = float(signal_result["lamda"])
+    window = float(signal_result["window"])
+    lamda_key = f"{lamda:.11f}"
+    signal_array = np.asarray(signal_result["signal"], dtype=float)
+    reverse_time = bool(signal_result.get("reverse_time", False))
+    subdir = "window_S_rev" if reverse_time else "window_S"
+
+    payload = {
+        "lamda": lamda_key,
+        "lamda_float": lamda,
+        "window": window,
+        "k_samples": np.asarray(signal_result["k_samples"], dtype=int),
+        "t_samples": np.asarray(signal_result["t_samples"], dtype=float),
+        "signal": signal_array,
+        "signal_array": signal_array,
+        "reverse_time": reverse_time,
+        "direction": signal_result.get(
+            "direction",
+            "backward" if reverse_time else "forward",
+        ),
+    }
+
+    outdir = signal_base / subdir / window_key(window)
+    outdir.mkdir(parents=True, exist_ok=True)
+    with (outdir / f"window_S{lamda_key}").open("wb") as handle:
+        pickle.dump(payload, handle)
+
+
 def get_selected_lambdas(signal_metadata: dict | None) -> np.ndarray:
     """
     Return the lambda values shown in the figure.
@@ -122,6 +224,67 @@ def get_selected_lambdas(signal_metadata: dict | None) -> np.ndarray:
         return np.asarray(DEFAULT_LAMBDAS, dtype=float)
 
     return np.sort(np.asarray(signal_metadata["lambdas"], dtype=float))
+
+
+def ensure_signal_payloads(
+    signal_base: Path,
+    signal_metadata: dict | None,
+    signal_subdir: str,
+    windows: list[float],
+    lambdas: np.ndarray,
+) -> None:
+    missing_pairs = [
+        (float(window), float(lamda))
+        for window in windows
+        for lamda in lambdas
+        if not (
+            signal_base
+            / signal_subdir
+            / window_key(window)
+            / f"window_S{float(lamda):.11f}"
+        ).exists()
+    ]
+
+    if len(missing_pairs) == 0:
+        return
+
+    print(
+        "Computing missing split-merge local entropy signals for windows "
+        + ", ".join(window_key(window) for window in windows)
+    )
+    network = load_split_merge_network(signal_metadata)
+    sample_fraction = (
+        float(signal_metadata.get("sample_fraction", 1.0))
+        if signal_metadata is not None
+        else 1.0
+    )
+    window_backend = (
+        signal_metadata.get("window_backend", "segment_tree")
+        if signal_metadata is not None
+        else "segment_tree"
+    )
+    reverse_time = bool(signal_metadata.get("reverse_time", False)) if signal_metadata else False
+    p0 = np.ones(network.num_nodes, dtype=float) / float(network.num_nodes)
+    prepared = prepare_signal_sample(
+        net=network,
+        windows=windows,
+        sample_fraction=sample_fraction,
+        p0=p0,
+        reverse_time=reverse_time,
+    )
+    signals_by_lambda = compute_signals_for_lambdas_prepared(
+        prepared=prepared,
+        lambdas=lambdas,
+        use_linear_approx=False,
+        lin_t_s=10,
+        window_backend=window_backend,
+    )
+    for window_results in signals_by_lambda.values():
+        for window in windows:
+            save_window_signal_payload(
+                signal_result=window_results[float(window)],
+                signal_base=signal_base,
+            )
 
 
 def load_signal_payload(
@@ -150,24 +313,84 @@ def load_signal_payload(
     return load_pickle(signal_path)
 
 
-def load_limit_payload(window: float, limit_base: Path) -> dict:
-    """
-    Load one saved split-merge limit payload.
-    """
-
-    signal_path = (
+def limit_payload_path(window: float, limit_base: Path) -> Path:
+    return (
         limit_base
         / "window_limit_selected"
         / window_key(window)
         / "window_limit.pkl"
     )
 
-    if not signal_path.exists():
-        raise FileNotFoundError(
-            f"Missing limit file {signal_path}. Run split_merge_limit.py first."
-        )
 
-    return load_pickle(signal_path)
+def compute_component_log_sum(network, start_time: float, window: float) -> float:
+    adjacency = network.compute_static_adjacency_matrix(
+        start_time=float(start_time),
+        end_time=float(start_time) + float(window),
+    ).tocsr()
+
+    n_components, labels = connected_components(
+        adjacency,
+        directed=False,
+        return_labels=True,
+    )
+    component_sizes = np.bincount(labels, minlength=n_components).astype(float)
+    weights = component_sizes / float(network.num_nodes)
+    return float(np.sum(weights * np.log(component_sizes)))
+
+
+def compute_window_limit_payload(network, window: float) -> dict:
+    k_samples = np.flatnonzero(
+        np.asarray(network.times, dtype=float) < network.times[-1] - float(window)
+    ).astype(int)
+    t_samples = np.asarray(network.times[k_samples], dtype=float)
+    values = np.empty(len(t_samples), dtype=float)
+
+    for idx, start_time in enumerate(t_samples):
+        values[idx] = compute_component_log_sum(
+            network=network,
+            start_time=float(start_time),
+            window=float(window),
+        )
+        if (idx + 1) % 250 == 0 or idx + 1 == len(t_samples):
+            print(
+                f"split_merge limit, window={window_key(window)}: "
+                f"{idx + 1}/{len(t_samples)} samples"
+            )
+
+    time_limit_array = (
+        np.column_stack((t_samples, values))
+        if len(t_samples) > 0
+        else np.empty((0, 2), dtype=float)
+    )
+
+    return {
+        "window": float(window),
+        "window_seconds": float(window),
+        "k_samples": k_samples,
+        "t_samples": t_samples,
+        "component_log_sums": values,
+        "signal": values,
+        "signal_array": values,
+        "time_component_log_sums": time_limit_array,
+        "statistic": "sum((size / N) * log(size)) over connected components",
+    }
+
+
+def load_or_compute_limit_payload(window: float, limit_base: Path, network) -> dict:
+    """
+    Load one saved split-merge limit payload.
+    """
+
+    signal_path = limit_payload_path(window=window, limit_base=limit_base)
+
+    if signal_path.exists():
+        return load_pickle(signal_path)
+
+    payload = compute_window_limit_payload(network=network, window=window)
+    signal_path.parent.mkdir(parents=True, exist_ok=True)
+    with signal_path.open("wb") as handle:
+        pickle.dump(payload, handle)
+    return payload
 
 
 def extract_signal_array(payload: dict, lamda: float) -> np.ndarray:
@@ -222,13 +445,25 @@ def format_lambda_label(lamda: float) -> str:
 
 
 def main() -> None:
-    signal_base = resolve_signal_base()
+    args = parse_args()
+    signal_base = resolve_signal_base(requested_base=args.signal_base)
     signal_metadata = load_metadata(signal_base)
     signal_subdir = resolve_signal_subdir(signal_base, signal_metadata)
-    limit_base = resolve_limit_base(signal_base)
+    limit_base = resolve_limit_base(signal_base, requested_base=args.limit_base)
 
-    windows = get_windows(signal_metadata)
+    windows = get_windows(
+        signal_metadata,
+        requested_windows=args.windows,
+    )
     selected_lambdas = get_selected_lambdas(signal_metadata)
+    ensure_signal_payloads(
+        signal_base=signal_base,
+        signal_metadata=signal_metadata,
+        signal_subdir=signal_subdir,
+        windows=windows,
+        lambdas=selected_lambdas,
+    )
+    network = load_split_merge_network(signal_metadata)
     colors = auxiliary_functions.generate_plasma_colors(len(selected_lambdas))
 
     fig_width = max(12.0, 3.7 * len(windows))
@@ -254,7 +489,11 @@ def main() -> None:
                 label=format_lambda_label(lamda),
             )
 
-        limit_payload = load_limit_payload(window=window, limit_base=limit_base)
+        limit_payload = load_or_compute_limit_payload(
+            window=window,
+            limit_base=limit_base,
+            network=network,
+        )
         limit_curve = extract_limit_array(limit_payload)
         ax.plot(
             limit_curve[:, 0],
@@ -282,8 +521,8 @@ def main() -> None:
     )
 
     fig.tight_layout(rect=(0, 0.12, 1, 1))
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(OUTPUT_PATH, format="pdf", dpi=300, bbox_inches="tight")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(args.output, format="pdf", dpi=300, bbox_inches="tight")
     if "agg" not in plt.get_backend().lower():
         plt.show()
 

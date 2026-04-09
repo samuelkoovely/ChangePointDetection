@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 import pickle
 
@@ -11,12 +12,18 @@ from scipy.sparse.csgraph import connected_components
 import auxiliary_functions
 
 
-RESULTS_BASE_CANDIDATES = (
+GLOBAL_RESULTS_BASE_CANDIDATES = (
     Path("gridsearch_results/motifs_global"),
     Path("gridsearch_results/motifs_global_f"),
     Path("gridsearch_results/motifs_global_b"),
 )
-OUTPUT_PATH = Path("./figures/fig_global_entropy.pdf")
+LOCAL_RESULTS_BASE_CANDIDATES = (
+    Path("gridsearch_results/motifs_f"),
+    Path("gridsearch_results/motifs"),
+    Path("gridsearch_results/motifs_run1"),
+    Path("gridsearch_results/motifs_b"),
+)
+DEFAULT_OUTPUT_PATH = Path("./figures/fig_global_entropy.pdf")
 MOTIF_NAMES = ("merge_merge", "merge_split", "split_merge")
 DEFAULT_CURVE_INDICES = [5, 6, 7, 8]
 BACKWARD_CURVE_STYLE = {
@@ -33,12 +40,49 @@ LIMIT_STYLE = {
 GLOBAL_LIMIT_START_TIME = 0.0
 
 
-def signal_subdir(reverse_time):
-    return "global_S_rev" if reverse_time else "global_S"
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Plot motif entropy curves. Use --curve-kind local together with "
+            "--window to visualize local entropy signals."
+        )
+    )
+    parser.add_argument(
+        "--curve-kind",
+        choices=("global", "local"),
+        default="global",
+        help="Which family of entropy curves to plot.",
+    )
+    parser.add_argument(
+        "--window",
+        type=float,
+        default=10.0,
+        help="Local window length in seconds. Ignored for global curves.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional output PDF path.",
+    )
+    return parser.parse_args()
 
 
-def signal_filename(lamda):
-    return f"global_S{float(lamda):.11f}"
+def default_output_path(curve_kind, window):
+    if curve_kind == "global":
+        return DEFAULT_OUTPUT_PATH
+    return Path(f"./figures/fig_global_entropy_local_window_{float(window):g}.pdf")
+
+
+def signal_subdir(curve_kind, reverse_time):
+    if curve_kind == "global":
+        return "global_S_rev" if reverse_time else "global_S"
+    return "window_S_rev" if reverse_time else "window_S"
+
+
+def signal_filename(curve_kind, lamda):
+    prefix = "global_S" if curve_kind == "global" else "window_S"
+    return f"{prefix}{float(lamda):.11f}"
 
 
 def direction_metadata_filename(reverse_time):
@@ -49,38 +93,54 @@ def format_lambda_label(lamda):
     return f"$\\lambda$ = {float(lamda):.2e}"
 
 
-def resolve_results_base_for_direction(reverse_time, allow_missing=False):
-    expected_subdir = signal_subdir(reverse_time)
+def resolve_results_base_for_direction(
+    curve_kind,
+    reverse_time,
+    window=None,
+    allow_missing=False,
+):
+    expected_subdir = signal_subdir(curve_kind, reverse_time)
     expected_metadata = direction_metadata_filename(reverse_time)
+    candidates = (
+        GLOBAL_RESULTS_BASE_CANDIDATES
+        if curve_kind == "global"
+        else LOCAL_RESULTS_BASE_CANDIDATES
+    )
 
-    for candidate in RESULTS_BASE_CANDIDATES:
+    for candidate in candidates:
         if not candidate.exists():
             continue
-        if all(
-            (candidate / motif_name / expected_subdir).exists()
-            and (
-                (candidate / motif_name / expected_metadata).exists()
-                or (candidate / motif_name / "metadata.pkl").exists()
+        if curve_kind == "global":
+            valid = all(
+                (candidate / motif_name / expected_subdir).exists()
+                and (
+                    (candidate / motif_name / expected_metadata).exists()
+                    or (candidate / motif_name / "metadata.pkl").exists()
+                )
+                for motif_name in MOTIF_NAMES
             )
-            for motif_name in MOTIF_NAMES
-        ):
+        else:
+            valid = all(
+                (candidate / motif_name / "metadata.pkl").exists()
+                and (
+                    candidate
+                    / motif_name
+                    / expected_subdir
+                    / f"{float(window):g}"
+                ).exists()
+                for motif_name in MOTIF_NAMES
+            )
+        if valid:
             return candidate
 
     if allow_missing:
         return None
 
     raise FileNotFoundError(
-        f"Could not find {'backward' if reverse_time else 'forward'} global motif results. "
+        f"Could not find {'backward' if reverse_time else 'forward'} {curve_kind} motif results. "
         "Checked: "
-        + ", ".join(str(candidate) for candidate in RESULTS_BASE_CANDIDATES)
+        + ", ".join(str(candidate) for candidate in candidates)
     )
-
-
-FORWARD_RESULTS_BASE = resolve_results_base_for_direction(reverse_time=False)
-BACKWARD_RESULTS_BASE = resolve_results_base_for_direction(
-    reverse_time=True,
-    allow_missing=True,
-)
 
 
 def load_pickle(path):
@@ -88,8 +148,14 @@ def load_pickle(path):
         return pickle.load(handle)
 
 
-def load_metadata(motif_name, results_base, reverse_time=False):
+def load_metadata(motif_name, results_base, curve_kind="global", reverse_time=False):
     motif_dir = results_base / motif_name
+    if curve_kind == "local":
+        metadata_path = motif_dir / "metadata.pkl"
+        if metadata_path.exists():
+            return load_pickle(metadata_path)
+        raise FileNotFoundError(f"Could not find metadata for {motif_name} in {motif_dir}")
+
     candidates = (
         motif_dir / direction_metadata_filename(reverse_time),
         motif_dir / "metadata.pkl",
@@ -100,7 +166,12 @@ def load_metadata(motif_name, results_base, reverse_time=False):
     raise FileNotFoundError(f"Could not find metadata for {motif_name} in {motif_dir}")
 
 
-def metadata_lambdas(metadata, reverse_time=False):
+def metadata_lambdas(metadata, curve_kind="global", reverse_time=False):
+    if curve_kind == "local":
+        if "lambdas" in metadata:
+            return np.asarray(metadata["lambdas"], dtype=float)
+        raise KeyError("Metadata does not contain local lambdas.")
+
     direction_key = "backward_lambdas" if reverse_time else "forward_lambdas"
     if direction_key in metadata:
         return np.asarray(metadata[direction_key], dtype=float)
@@ -115,15 +186,14 @@ def metadata_lambdas(metadata, reverse_time=False):
     )
 
 
-def load_networks():
+def load_networks(results_base, curve_kind, reverse_time=False):
     networks = {}
-    results_base = FORWARD_RESULTS_BASE if FORWARD_RESULTS_BASE is not None else BACKWARD_RESULTS_BASE
-    reverse_time = False if FORWARD_RESULTS_BASE is not None else True
 
     for motif_name in MOTIF_NAMES:
         metadata = load_metadata(
             motif_name,
             results_base=results_base,
+            curve_kind=curve_kind,
             reverse_time=reverse_time,
         )
         networks[motif_name] = load_pickle(Path(metadata["network_path"]))
@@ -137,12 +207,20 @@ def compute_interval_matrices(network, intervals):
     ]
 
 
-def limit_payload_path(motif_name):
+def limit_payload_path(motif_name, results_base, curve_kind, window=None):
+    if curve_kind == "global":
+        return (
+            results_base
+            / motif_name
+            / "global_limit_selected"
+            / "global_limit.pkl"
+        )
     return (
-        FORWARD_RESULTS_BASE
+        results_base
         / motif_name
-        / "global_limit_selected"
-        / "global_limit.pkl"
+        / "window_limit_selected"
+        / f"{float(window):g}"
+        / "window_limit.pkl"
     )
 
 
@@ -200,15 +278,82 @@ def compute_global_limit_payload(network, motif_name):
     }
 
 
-def load_or_compute_limit_payload(motif_name, network):
-    payload_path = limit_payload_path(motif_name)
+def compute_window_component_log_sum(network, start_time, window_seconds):
+    adjacency = network.compute_static_adjacency_matrix(
+        start_time=float(start_time),
+        end_time=float(start_time) + float(window_seconds),
+    ).tocsr()
+
+    n_components, labels = connected_components(
+        adjacency,
+        directed=False,
+        return_labels=True,
+    )
+    component_sizes = np.bincount(labels, minlength=n_components).astype(float)
+    weights = component_sizes / float(network.num_nodes)
+    return float(np.sum(weights * np.log(component_sizes)))
+
+
+def compute_window_limit_payload(network, motif_name, window):
+    k_samples = np.flatnonzero(
+        np.asarray(network.times, dtype=float) < network.times[-1] - float(window)
+    ).astype(int)
+    t_samples = np.asarray(network.times[k_samples], dtype=float)
+    values = np.empty(len(t_samples), dtype=float)
+
+    for idx, start_time in enumerate(t_samples):
+        values[idx] = compute_window_component_log_sum(
+            network=network,
+            start_time=float(start_time),
+            window_seconds=float(window),
+        )
+        if (idx + 1) % 250 == 0 or idx + 1 == len(t_samples):
+            print(
+                f"{motif_name} limit, window={float(window):g}: "
+                f"{idx + 1}/{len(t_samples)} samples"
+            )
+
+    time_limit_array = (
+        np.column_stack((t_samples, values))
+        if len(t_samples) > 0
+        else np.empty((0, 2), dtype=float)
+    )
+
+    return {
+        "motif_name": motif_name,
+        "window": float(window),
+        "window_seconds": float(window),
+        "k_samples": k_samples,
+        "t_samples": t_samples,
+        "component_log_sums": values,
+        "signal": values,
+        "signal_array": values,
+        "time_component_log_sums": time_limit_array,
+        "statistic": "sum((size / N) * log(size)) over connected components",
+    }
+
+
+def load_or_compute_limit_payload(motif_name, network, results_base, curve_kind, window=None):
+    payload_path = limit_payload_path(
+        motif_name,
+        results_base=results_base,
+        curve_kind=curve_kind,
+        window=window,
+    )
     if payload_path.exists():
         return load_pickle(payload_path)
 
-    payload = compute_global_limit_payload(
-        network=network,
-        motif_name=motif_name,
-    )
+    if curve_kind == "global":
+        payload = compute_global_limit_payload(
+            network=network,
+            motif_name=motif_name,
+        )
+    else:
+        payload = compute_window_limit_payload(
+            network=network,
+            motif_name=motif_name,
+            window=float(window),
+        )
     payload_path.parent.mkdir(parents=True, exist_ok=True)
     with payload_path.open("wb") as handle:
         pickle.dump(payload, handle)
@@ -238,18 +383,33 @@ def extract_signal_array(payload, lamda):
     return np.asarray(signal, dtype=float)
 
 
-def load_entropy_curves(motif_name, results_base, reverse_time=False):
+def load_entropy_curves(
+    motif_name,
+    results_base,
+    curve_kind="global",
+    window=None,
+    reverse_time=False,
+):
     metadata = load_metadata(
         motif_name,
         results_base=results_base,
+        curve_kind=curve_kind,
         reverse_time=reverse_time,
     )
-    lambdas = np.sort(metadata_lambdas(metadata, reverse_time=reverse_time))
-    curve_dir = results_base / motif_name / signal_subdir(reverse_time)
+    lambdas = np.sort(
+        metadata_lambdas(
+            metadata,
+            curve_kind=curve_kind,
+            reverse_time=reverse_time,
+        )
+    )
+    curve_dir = results_base / motif_name / signal_subdir(curve_kind, reverse_time)
+    if curve_kind == "local":
+        curve_dir = curve_dir / f"{float(window):g}"
 
     curves = []
     for lamda in lambdas:
-        filepath = curve_dir / signal_filename(lamda)
+        filepath = curve_dir / signal_filename(curve_kind, lamda)
         data = load_pickle(filepath)
         curves.append(
             [
@@ -354,7 +514,23 @@ def plot_network_panel(
 
 
 def main():
-    networks = load_networks()
+    args = parse_args()
+    forward_results_base = resolve_results_base_for_direction(
+        curve_kind=args.curve_kind,
+        reverse_time=False,
+        window=args.window,
+    )
+    backward_results_base = resolve_results_base_for_direction(
+        curve_kind=args.curve_kind,
+        reverse_time=True,
+        window=args.window,
+        allow_missing=True,
+    )
+    networks = load_networks(
+        results_base=forward_results_base,
+        curve_kind=args.curve_kind,
+        reverse_time=False,
+    )
     panel_specs = [
         {"key": "merge_merge", "title": "(A)", "backward_index": 7},
         {"key": "merge_split", "title": "(B)", "backward_index": 7},
@@ -370,7 +546,9 @@ def main():
     forward_entropy = {
         key: load_entropy_curves(
             key,
-            results_base=FORWARD_RESULTS_BASE,
+            results_base=forward_results_base,
+            curve_kind=args.curve_kind,
+            window=args.window,
             reverse_time=False,
         )
         for key in networks
@@ -379,12 +557,14 @@ def main():
         {
             key: load_entropy_curves(
                 key,
-                results_base=BACKWARD_RESULTS_BASE,
+                results_base=backward_results_base,
+                curve_kind=args.curve_kind,
+                window=args.window,
                 reverse_time=True,
             )
             for key in networks
         }
-        if BACKWARD_RESULTS_BASE is not None
+        if backward_results_base is not None
         else {}
     )
     limit_curves = {
@@ -392,6 +572,9 @@ def main():
             load_or_compute_limit_payload(
                 motif_name=key,
                 network=networks[key],
+                results_base=forward_results_base,
+                curve_kind=args.curve_kind,
+                window=args.window,
             )
         )
         for key in networks
@@ -400,11 +583,16 @@ def main():
     reference_motif = panel_specs[0]["key"]
     forward_reference_metadata = load_metadata(
         reference_motif,
-        results_base=FORWARD_RESULTS_BASE,
+        results_base=forward_results_base,
+        curve_kind=args.curve_kind,
         reverse_time=False,
     )
     forward_lambdas = np.sort(
-        metadata_lambdas(forward_reference_metadata, reverse_time=False)
+        metadata_lambdas(
+            forward_reference_metadata,
+            curve_kind=args.curve_kind,
+            reverse_time=False,
+        )
     )
     selected_forward_lambdas = select_values(forward_lambdas, DEFAULT_CURVE_INDICES)
     forward_colors = auxiliary_functions.generate_plasma_colors(
@@ -447,7 +635,7 @@ def main():
         Line2D([0], [0], color=color, linewidth=1.8, label=format_lambda_label(lamda))
         for color, lamda in zip(forward_colors, selected_forward_lambdas)
     ]
-    if BACKWARD_RESULTS_BASE is not None:
+    if backward_results_base is not None:
         legend_handles.append(
             Line2D(
                 [0],
@@ -475,9 +663,10 @@ def main():
         fontsize="small",
     )
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    output_path = args.output or default_output_path(args.curve_kind, args.window)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout(rect=(0, 0.12, 1, 1))
-    fig.savefig(OUTPUT_PATH, format="pdf", dpi=300, bbox_inches="tight")
+    fig.savefig(output_path, format="pdf", dpi=300, bbox_inches="tight")
     if "agg" not in plt.get_backend().lower():
         plt.show()
 
