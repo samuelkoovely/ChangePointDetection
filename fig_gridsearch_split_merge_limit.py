@@ -213,6 +213,14 @@ def window_title(window: float) -> str:
     return f"{seconds:g} s window"
 
 
+def format_lambda_label(lamda: float) -> str:
+    """
+    Format lambda values consistently in scientific notation for the legend.
+    """
+
+    return f"$\\lambda$ = {lamda:.2e}"
+
+
 def main() -> None:
     signal_base = resolve_signal_base()
     signal_metadata = load_metadata(signal_base)
@@ -223,8 +231,8 @@ def main() -> None:
     selected_lambdas = get_selected_lambdas(signal_metadata)
     colors = auxiliary_functions.generate_plasma_colors(len(selected_lambdas))
 
-    fig_width = max(10.0, 3.7 * len(windows))
-    fig, axes = plt.subplots(1, len(windows), figsize=(fig_width, 4), sharey=False)
+    fig_width = max(12.0, 3.7 * len(windows))
+    fig, axes = plt.subplots(1, len(windows), figsize=(fig_width, 4.8), sharey=False)
     if len(windows) == 1:
         axes = [axes]
 
@@ -243,7 +251,7 @@ def main() -> None:
                 signal,
                 color=color,
                 alpha=0.85,
-                label=f"$\\lambda$ = {lamda:.5g}",
+                label=format_lambda_label(lamda),
             )
 
         limit_payload = load_limit_payload(window=window, limit_base=limit_base)
@@ -254,19 +262,26 @@ def main() -> None:
             color="black",
             linestyle="--",
             linewidth=1.8,
-            label="Limit Statistic" if panel_idx == 0 else None,
+            label="Upper Bound" if panel_idx == 0 else None,
         )
 
         ax.set_title(window_title(window))
         ax.set_xlabel("Time (s)")
 
-    axes[0].set_ylabel("Local Entropy / Limit Statistic")
+    axes[0].set_ylabel("Entropy")
 
     legend_handles = list(axes[0].lines)
     legend_labels = [line.get_label() for line in legend_handles]
-    axes[0].legend(legend_handles, legend_labels, loc="best", fontsize="small")
+    fig.legend(
+        legend_handles,
+        legend_labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.02),
+        ncol=len(legend_handles),
+        fontsize="small",
+    )
 
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.12, 1, 1))
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUTPUT_PATH, format="pdf", dpi=300, bbox_inches="tight")
     if "agg" not in plt.get_backend().lower():

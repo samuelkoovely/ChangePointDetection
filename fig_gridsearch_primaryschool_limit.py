@@ -136,13 +136,21 @@ def window_title(window_seconds: float) -> str:
     return f"{minutes:g} min window"
 
 
+def format_lambda_label(lamda: float) -> str:
+    """
+    Format lambda values consistently in scientific notation for the legend.
+    """
+
+    return f"$\\lambda$ = {lamda:.2e}"
+
+
 def main() -> None:
     signal_metadata = load_metadata(SIGNAL_OUTPUT_BASE)
     windows_seconds = get_windows_seconds(signal_metadata)
     selected_lambdas = get_selected_lambdas(signal_metadata)
     colors = auxiliary_functions.generate_plasma_colors(len(selected_lambdas))
 
-    fig, axes = plt.subplots(1, len(windows_seconds), figsize=(11, 4), sharey=False)
+    fig, axes = plt.subplots(1, len(windows_seconds), figsize=(14, 5.5), sharey=False)
     if len(windows_seconds) == 1:
         axes = [axes]
 
@@ -156,7 +164,7 @@ def main() -> None:
                 signal,
                 color=color,
                 alpha=0.8,
-                label=f"$\\lambda$ = {lamda:.5g}",
+                label=format_lambda_label(lamda),
             )
 
         limit_payload = load_limit_payload(window_seconds=window_seconds)
@@ -168,19 +176,27 @@ def main() -> None:
             color="black",
             linestyle="--",
             linewidth=1.8,
-            label="Limit Statistic" if panel_idx == 0 else None,
+            label="Upper Bound" if panel_idx == 0 else None,
         )
 
         ax.set_title(window_title(window_seconds))
         ax.set_xlabel("Time (hours)")
+        ax.set_box_aspect(1)
 
-    axes[0].set_ylabel("Entropy / Limit Statistic")
+    axes[0].set_ylabel("Entropy")
 
     legend_handles = list(axes[0].lines)
     legend_labels = [line.get_label() for line in legend_handles]
-    axes[0].legend(legend_handles, legend_labels, loc="best", fontsize="small")
+    fig.legend(
+        legend_handles,
+        legend_labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.02),
+        ncol=len(legend_handles),
+        fontsize="small",
+    )
 
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.12, 1, 1))
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUTPUT_FIGURE, format="pdf", dpi=300, bbox_inches="tight")
     plt.show()

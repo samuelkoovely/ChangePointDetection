@@ -4,6 +4,7 @@ import pickle
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import colormaps
+from matplotlib.lines import Line2D
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from scipy.sparse.csgraph import connected_components
 
@@ -42,6 +43,10 @@ def signal_filename(lamda):
 
 def direction_metadata_filename(reverse_time):
     return f"metadata_{'backward' if reverse_time else 'forward'}.pkl"
+
+
+def format_lambda_label(lamda):
+    return f"$\\lambda$ = {float(lamda):.2e}"
 
 
 def resolve_results_base_for_direction(reverse_time, allow_missing=False):
@@ -274,6 +279,16 @@ def select_single_curve(curves, preferred_index):
     return curves[safe_index]
 
 
+def select_values(values, selected_indices):
+    if selected_indices is None:
+        return list(values)
+    if len(values) == 0:
+        return []
+    if max(selected_indices, default=-1) >= len(values):
+        return list(values)
+    return [values[idx] for idx in selected_indices]
+
+
 def make_inset_cmap():
     cmap = colormaps["inferno"].copy()
     cmap.set_bad(color="white")
@@ -305,6 +320,7 @@ def plot_network_panel(
     ax.set_ylim(-2, 5)
     ax.set_xlabel("t [s]")
     ax.set_title(panel_title, loc="left", fontsize=14)
+    ax.set_box_aspect(1)
 
     for matrix, pos, (start, end) in zip(matrices, inset_positions, time_intervals):
         inset_ax = inset_axes(
@@ -381,7 +397,21 @@ def main():
         for key in networks
     }
 
-    fig = plt.figure(figsize=(12, 4))
+    reference_motif = panel_specs[0]["key"]
+    forward_reference_metadata = load_metadata(
+        reference_motif,
+        results_base=FORWARD_RESULTS_BASE,
+        reverse_time=False,
+    )
+    forward_lambdas = np.sort(
+        metadata_lambdas(forward_reference_metadata, reverse_time=False)
+    )
+    selected_forward_lambdas = select_values(forward_lambdas, DEFAULT_CURVE_INDICES)
+    forward_colors = auxiliary_functions.generate_plasma_colors(
+        len(selected_forward_lambdas)
+    )
+
+    fig = plt.figure(figsize=(13, 5.4))
     gs = fig.add_gridspec(1, 3)
     axes = np.atleast_1d(gs.subplots(sharey=True))
     inset_cmap = make_inset_cmap()
@@ -396,13 +426,12 @@ def main():
             backward_entropy.get(key, []),
             preferred_index=spec.get("backward_index"),
         )
-        colors = auxiliary_functions.generate_plasma_colors(len(selected_curves))
         plot_network_panel(
             ax=ax,
             forward_curves=selected_curves,
             matrices=interval_matrices[key],
             panel_title=spec["title"],
-            forward_colors=colors,
+            forward_colors=forward_colors,
             time_intervals=time_intervals,
             inset_positions=inset_positions,
             inset_cmap=inset_cmap,
@@ -414,9 +443,41 @@ def main():
     for ax in axes[1:]:
         ax.tick_params(labelleft=False)
 
+    legend_handles = [
+        Line2D([0], [0], color=color, linewidth=1.8, label=format_lambda_label(lamda))
+        for color, lamda in zip(forward_colors, selected_forward_lambdas)
+    ]
+    if BACKWARD_RESULTS_BASE is not None:
+        legend_handles.append(
+            Line2D(
+                [0],
+                [0],
+                color=BACKWARD_CURVE_STYLE["color"],
+                linewidth=BACKWARD_CURVE_STYLE["linewidth"],
+                label="Backward Entropy",
+            )
+        )
+    legend_handles.append(
+        Line2D(
+            [0],
+            [0],
+            color=LIMIT_STYLE["color"],
+            linestyle=LIMIT_STYLE["linestyle"],
+            linewidth=LIMIT_STYLE["linewidth"],
+            label="Limit Statistic",
+        )
+    )
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.02),
+        ncol=len(legend_handles),
+        fontsize="small",
+    )
+
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    plt.tight_layout()
-    plt.savefig(OUTPUT_PATH, format="pdf", dpi=300, bbox_inches="tight")
+    fig.tight_layout(rect=(0, 0.12, 1, 1))
+    fig.savefig(OUTPUT_PATH, format="pdf", dpi=300, bbox_inches="tight")
     if "agg" not in plt.get_backend().lower():
         plt.show()
 

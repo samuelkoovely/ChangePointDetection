@@ -11,16 +11,11 @@ from scipy.sparse.csgraph import connected_components
 import auxiliary_functions
 
 
-RESULTS_BASE_CANDIDATES = (
-    Path("gridsearch_results/motifs"),
-    Path("gridsearch_results/motifs_f"),
-    Path("gridsearch_results/motifs_run1"),
-    Path("gridsearch_results/motifs_b"),
-)
-WINDOW = 5.0
-OUTPUT_PATH = Path("./figures/fig_local_entropy.pdf")
+FORWARD_RESULTS_BASE = Path("gridsearch_results/motifs_f")
+BACKWARD_RESULTS_BASE = Path("gridsearch_results/motifs_b")
 MOTIF_NAMES = ("merge_merge", "merge_split", "split_merge")
-DEFAULT_CURVE_INDICES = [5, 6, 7, 8]
+WINDOW = 5
+OUTPUT_PATH = Path("./figures/fig_local_entropy_3.pdf")
 LIMIT_STYLE = {
     "color": "black",
     "linestyle": "--",
@@ -38,46 +33,29 @@ def format_lambda_label(lamda):
     return f"$\\lambda$ = {float(lamda):.2e}"
 
 
-def resolve_results_base_for_direction(reverse_time, allow_missing=False):
-    expected_subdir = "window_S_rev" if reverse_time else "window_S"
-    for candidate in RESULTS_BASE_CANDIDATES:
-        if not candidate.exists():
-            continue
-        if all(
-            (candidate / motif_name / "metadata.pkl").exists()
-            and (candidate / motif_name / expected_subdir / f"{float(WINDOW):g}").exists()
-            for motif_name in MOTIF_NAMES
-        ):
-            return candidate
-    if allow_missing:
-        return None
-    raise FileNotFoundError(
-        f"Could not find {'backward' if reverse_time else 'forward'} motif results. "
-        "Checked: "
-        + ", ".join(str(candidate) for candidate in RESULTS_BASE_CANDIDATES)
-    )
-
-
-FORWARD_RESULTS_BASE = resolve_results_base_for_direction(reverse_time=False)
-BACKWARD_RESULTS_BASE = resolve_results_base_for_direction(
-    reverse_time=True,
-    allow_missing=True,
-)
-
-
 def load_pickle(path):
     with path.open("rb") as handle:
         return pickle.load(handle)
 
 
-def load_metadata(motif_name, results_base):
-    return load_pickle(results_base / motif_name / "metadata.pkl")
+def validate_results_base(results_base, reverse_time):
+    expected_subdir = "window_S_rev" if reverse_time else "window_S"
+    for motif_name in MOTIF_NAMES:
+        motif_dir = results_base / motif_name
+        metadata_path = motif_dir / "metadata.pkl"
+        window_dir = motif_dir / expected_subdir / f"{float(WINDOW):g}"
+        if not metadata_path.exists() or not window_dir.exists():
+            direction = "backward" if reverse_time else "forward"
+            raise FileNotFoundError(
+                f"Missing {direction} local-entropy inputs under {results_base} "
+                f"for motif {motif_name}."
+            )
 
 
 def load_networks():
     networks = {}
     for motif_name in MOTIF_NAMES:
-        metadata = load_metadata(motif_name, results_base=FORWARD_RESULTS_BASE)
+        metadata = load_pickle(FORWARD_RESULTS_BASE / motif_name / "metadata.pkl")
         networks[motif_name] = load_pickle(Path(metadata["network_path"]))
     return networks
 
@@ -87,10 +65,6 @@ def compute_interval_matrices(network, intervals):
         network.compute_static_adjacency_matrix(start_time=start, end_time=end).toarray()
         for start, end in intervals
     ]
-
-
-def get_entropy_subdir(metadata):
-    return "window_S_rev" if metadata.get("reverse_time", False) else "window_S"
 
 
 def extract_signal_array(payload, lamda):
@@ -105,26 +79,46 @@ def extract_signal_array(payload, lamda):
 
 
 def load_entropy_curves(motif_name, results_base, window=WINDOW, reverse_time=False):
-    metadata = load_metadata(motif_name, results_base=results_base)
+    metadata = load_pickle(results_base / motif_name / "metadata.pkl")
     lambdas = np.sort(np.asarray(metadata["lambdas"], dtype=float))
-    curve_dir = (
-        results_base
-        / motif_name
-        / ("window_S_rev" if reverse_time else "window_S")
-        / f"{float(window):g}"
-    )
-
+    signal_subdir = "window_S_rev" if reverse_time else "window_S"
     curves = []
     for lamda in lambdas:
-        filepath = curve_dir / f"window_S{lamda:.11f}"
-        data = load_pickle(filepath)
+        curve_path = (
+            results_base
+            / motif_name
+            / signal_subdir
+            / f"{float(window):g}"
+            / f"window_S{lamda:.11f}"
+        )
+        data = load_pickle(curve_path)
         curves.append(
-            [
-                np.asarray(data["t_samples"], dtype=float),
-                extract_signal_array(data, lamda=lamda),
-            ]
+            {
+                "t_samples": np.asarray(data["t_samples"], dtype=float),
+                "signal": extract_signal_array(data, lamda=lamda),
+                "lambda": float(lamda),
+            }
         )
     return curves
+
+
+def select_curves(curves, curve_indices):
+    if curve_indices is None:
+        return curves
+    if len(curves) == 0:
+        return []
+    if max(curve_indices, default=-1) >= len(curves):
+        return curves
+    return [curves[idx] for idx in curve_indices]
+
+
+def select_single_curve(curves, preferred_index=None):
+    if len(curves) == 0:
+        return None
+    if preferred_index is None:
+        return curves[-1]
+    safe_index = min(max(int(preferred_index), 0), len(curves) - 1)
+    return curves[safe_index]
 
 
 def limit_payload_path(motif_name, window=WINDOW):
@@ -154,9 +148,7 @@ def compute_component_log_sum(network, start_time, window_seconds):
 
 
 def compute_window_limit_payload(network, motif_name, window=WINDOW):
-    k_samples = np.flatnonzero(
-        np.asarray(network.times, dtype=float) < network.times[-1] - float(window)
-    ).astype(int)
+    k_samples = np.flatnonzero(network.times < network.times[-1] - float(window)).astype(int)
     t_samples = np.asarray(network.times[k_samples], dtype=float)
     values = np.empty(len(t_samples), dtype=float)
 
@@ -197,11 +189,7 @@ def load_or_compute_limit_payload(motif_name, network, window=WINDOW):
     if payload_path.exists():
         return load_pickle(payload_path)
 
-    payload = compute_window_limit_payload(
-        network=network,
-        motif_name=motif_name,
-        window=window,
-    )
+    payload = compute_window_limit_payload(network, motif_name=motif_name, window=window)
     payload_path.parent.mkdir(parents=True, exist_ok=True)
     with payload_path.open("wb") as handle:
         pickle.dump(payload, handle)
@@ -220,35 +208,6 @@ def extract_limit_array(payload):
     )
 
 
-def select_curves(curves, curve_indices):
-    if curve_indices is None:
-        return curves
-    if len(curves) == 0:
-        return []
-    if max(curve_indices, default=-1) >= len(curves):
-        return curves
-    return [curves[idx] for idx in curve_indices]
-
-
-def select_single_curve(curves, preferred_index):
-    if len(curves) == 0:
-        return None
-    if preferred_index is None:
-        return curves[-1]
-    safe_index = min(max(int(preferred_index), 0), len(curves) - 1)
-    return curves[safe_index]
-
-
-def select_values(values, selected_indices):
-    if selected_indices is None:
-        return list(values)
-    if len(values) == 0:
-        return []
-    if max(selected_indices, default=-1) >= len(values):
-        return list(values)
-    return [values[idx] for idx in selected_indices]
-
-
 def make_inset_cmap():
     cmap = colormaps["inferno"].copy()
     cmap.set_bad(color="white")
@@ -258,26 +217,34 @@ def make_inset_cmap():
 def plot_network_panel(
     ax,
     forward_curves,
+    backward_curve,
     matrices,
     panel_title,
-    forward_colors,
+    lambda_colors,
     time_intervals,
     inset_positions,
     inset_cmap,
-    backward_curve=None,
     limit_curve=None,
 ):
-    for color, curve in zip(forward_colors, forward_curves):
-        ax.plot(curve[0], curve[1], color=color, alpha=1)
+    for curve in forward_curves:
+        ax.plot(
+            curve["t_samples"],
+            curve["signal"],
+            color=lambda_colors[curve["lambda"]],
+            alpha=1,
+        )
 
     if backward_curve is not None:
-        ax.plot(backward_curve[0], backward_curve[1], **BACKWARD_CURVE_STYLE)
+        ax.plot(
+            backward_curve["t_samples"],
+            backward_curve["signal"],
+            **BACKWARD_CURVE_STYLE,
+        )
 
     if limit_curve is not None:
         ax.plot(limit_curve[:, 0], limit_curve[:, 1], **LIMIT_STYLE)
 
     ax.set_xlim(-5, 310)
-    ax.set_ylim(-2, 5)
     ax.set_xlabel("t [s]")
     ax.set_title(panel_title, loc="left", fontsize=14)
 
@@ -313,11 +280,31 @@ def plot_network_panel(
 
 
 def main():
+    validate_results_base(FORWARD_RESULTS_BASE, reverse_time=False)
+    validate_results_base(BACKWARD_RESULTS_BASE, reverse_time=True)
     networks = load_networks()
     panel_specs = [
-        {"key": "merge_merge", "title": "(A)", "backward_index": 7},
-        {"key": "merge_split", "title": "(B)", "backward_index": 5},
-        {"key": "split_merge", "title": "(C)", "backward_index": 6},
+        {
+            "key": "merge_merge",
+            "title": "(A)",
+            "curve_indices": [0],
+            "backward_index": None,
+            "y_label": "Entropy",
+        },
+        {
+            "key": "merge_split",
+            "title": "(B)",
+            "curve_indices": None,
+            "backward_index": None,
+            "y_label": "Entropy",
+        },
+        {
+            "key": "split_merge",
+            "title": "(C)",
+            "curve_indices": None,
+            "backward_index": None,
+            "y_label": "Entropy / Limit Statistic",
+        },
     ]
     inset_positions = [0.06, 0.37, 0.68]
     time_intervals = [(0, 100), (100, 200), (200, 300)]
@@ -335,105 +322,102 @@ def main():
         )
         for key in networks
     }
-    backward_entropy = (
-        {
-            key: load_entropy_curves(
-                key,
-                results_base=BACKWARD_RESULTS_BASE,
-                window=WINDOW,
-                reverse_time=True,
-            )
-            for key in networks
-        }
-        if BACKWARD_RESULTS_BASE is not None
-        else {}
-    )
-    limit_curves = {
-        key: extract_limit_array(
-            load_or_compute_limit_payload(
-                motif_name=key,
-                network=networks[key],
-                window=WINDOW,
-            )
+    backward_entropy = {
+        key: load_entropy_curves(
+            key,
+            results_base=BACKWARD_RESULTS_BASE,
+            window=WINDOW,
+            reverse_time=True,
         )
         for key in networks
     }
+    limit_curves = {
+        "split_merge": extract_limit_array(
+            load_or_compute_limit_payload(
+                motif_name="split_merge",
+                network=networks["split_merge"],
+                window=WINDOW,
+            )
+        )
+    }
 
-    reference_motif = panel_specs[0]["key"]
-    forward_reference_metadata = load_metadata(
-        reference_motif,
-        results_base=FORWARD_RESULTS_BASE,
+    reference_key = next(
+        (key for key, curves in forward_entropy.items() if len(curves) > 0),
+        None,
     )
-    forward_lambdas = np.sort(np.asarray(forward_reference_metadata["lambdas"], dtype=float))
-    selected_forward_lambdas = select_values(forward_lambdas, DEFAULT_CURVE_INDICES)
-    forward_colors = auxiliary_functions.generate_plasma_colors(
-        len(selected_forward_lambdas)
+    all_lambdas = (
+        [curve["lambda"] for curve in forward_entropy[reference_key]]
+        if reference_key is not None
+        else []
     )
-    legend_entry_count = len(selected_forward_lambdas) + 1 + 1
+    lambda_colors = {
+        lamda: color
+        for lamda, color in zip(
+            all_lambdas,
+            auxiliary_functions.generate_plasma_colors(len(all_lambdas)),
+        )
+    }
+    legend_entry_count = len(all_lambdas) + 1 + (1 if limit_curves else 0)
     fig_width = max(12.0, 4.0 * len(panel_specs), 1.2 * legend_entry_count + 4.0)
 
     fig = plt.figure(figsize=(fig_width, 5.2))
     gs = fig.add_gridspec(1, 3)
-    axes = np.atleast_1d(gs.subplots(sharey=True))
+    axes = np.atleast_1d(gs.subplots())
     inset_cmap = make_inset_cmap()
 
     for ax, spec in zip(axes, panel_specs):
         key = spec["key"]
-        selected_curves = select_curves(
-            forward_entropy[key],
-            curve_indices=DEFAULT_CURVE_INDICES,
+        curve_indices = spec["curve_indices"]
+        selected_curves = select_curves(forward_entropy[key], curve_indices)
+        backward_candidates = select_curves(
+            backward_entropy[key],
+            [spec["backward_index"]] if spec["backward_index"] is not None else None,
         )
-        backward_curve = select_single_curve(
-            backward_entropy.get(key, []),
-            preferred_index=spec.get("backward_index"),
-        )
+        backward_curve = select_single_curve(backward_candidates)
         plot_network_panel(
             ax=ax,
             forward_curves=selected_curves,
+            backward_curve=backward_curve,
             matrices=interval_matrices[key],
             panel_title=spec["title"],
-            forward_colors=forward_colors,
+            lambda_colors=lambda_colors,
             time_intervals=time_intervals,
             inset_positions=inset_positions,
             inset_cmap=inset_cmap,
-            backward_curve=backward_curve,
             limit_curve=limit_curves.get(key),
         )
-
-    axes[0].set_ylabel("Entropy")
-    for ax in axes[1:]:
-        ax.tick_params(labelleft=False)
+        ax.set_ylabel(spec["y_label"])
 
     legend_handles = [
-        Line2D([0], [0], color=color, linewidth=1.8, label=format_lambda_label(lamda))
-        for color, lamda in zip(forward_colors, selected_forward_lambdas)
+        Line2D([0], [0], color=lambda_colors[lamda], linewidth=1.8, label=format_lambda_label(lamda))
+        for lamda in all_lambdas
     ]
-    if BACKWARD_RESULTS_BASE is not None:
-        legend_handles.append(
-            Line2D(
-                [0],
-                [0],
-                color=BACKWARD_CURVE_STYLE["color"],
-                linewidth=BACKWARD_CURVE_STYLE["linewidth"],
-                label="Backward Entropy",
-            )
-        )
     legend_handles.append(
         Line2D(
             [0],
             [0],
-            color=LIMIT_STYLE["color"],
-            linestyle=LIMIT_STYLE["linestyle"],
-            linewidth=LIMIT_STYLE["linewidth"],
-            label="Upper bound",
+            color=BACKWARD_CURVE_STYLE["color"],
+            linewidth=BACKWARD_CURVE_STYLE["linewidth"],
+            label="Backward Entropy",
         )
     )
+    if limit_curves:
+        legend_handles.append(
+            Line2D(
+                [0],
+                [0],
+                color=LIMIT_STYLE["color"],
+                linestyle=LIMIT_STYLE["linestyle"],
+                linewidth=LIMIT_STYLE["linewidth"],
+                label="Limit Statistic",
+            )
+        )
     fig.legend(
         handles=legend_handles,
         loc="lower center",
         bbox_to_anchor=(0.5, 0.02),
         ncol=len(legend_handles),
-        fontsize="small",
+        fontsize="x-small",
     )
 
     fig.subplots_adjust(left=0.07, right=0.995, top=0.92, bottom=0.17, wspace=0.18)
