@@ -10,6 +10,8 @@ import auxiliary_functions
 
 
 OUTPUT_BASE = Path("./gridsearch_results/primaryschool_day1")
+FIGURES_DIR = Path("./figures")
+OUTPUT_FIGURE = FIGURES_DIR / "fig_gridsearch_primaryschool.pdf"
 DEFAULT_WINDOWS_SECONDS = [120.0, 1800.0, 3600.0]
 DEFAULT_LAMBDAS = np.logspace(-5, 0, 10)
 SELECTED_LAMBDAS = DEFAULT_LAMBDAS[::2]
@@ -122,6 +124,8 @@ def main() -> None:
     axes[0].legend(loc="best", fontsize="small")
 
     fig.tight_layout()
+    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    fig.savefig(OUTPUT_FIGURE, format="pdf", dpi=300, bbox_inches="tight")
     plt.show()
 
 if __name__ == "__main__":
