@@ -1,23 +1,43 @@
+from __future__ import annotations
+
 import pickle
+from pathlib import Path
+
 import numpy as np
+
 from TemporalNetwork import ContTempNetwork
 
 
-with open('data/block1activity.pkl', 'rb') as handle:
-    dataset = pickle.load(handle)
+DATASET_PATHS = (
+    (Path("data/block1activity.pkl"), Path("data/block1activity_snapshots.pkl")),
+    (Path("data/block1activity_test.pkl"), Path("data/block1activity_snapshots_test.pkl")),
+)
+AGGREGATION_WINDOW = 4
+SNAPSHOTS_TO_SKIP_AT_START = 1
 
 
-aggregation_window = 4
-snapshots_to_skip_at_start = 1
-sanpshots_dataset = []
+def aggregate_breakpoints(
+    breakpoints: list[float],
+    aggregation_window: int,
+    num_snapshots: int,
+) -> list[int]:
+    aggregated_breakpoints = sorted(
+        {
+            int(float(breakpoint) // aggregation_window) - SNAPSHOTS_TO_SKIP_AT_START
+            for breakpoint in breakpoints
+        }
+    )
+    return [
+        breakpoint
+        for breakpoint in aggregated_breakpoints
+        if 0 <= breakpoint < num_snapshots
+    ]
 
-for data_index in range(len(dataset)):
-    tnet = dataset[data_index]
-    net = tnet['tnet']
-    breakpoints = [float(breakpoint) for breakpoint in tnet['bkps']]
 
-    #snapshots = []
-
+def build_snapshot_network(
+    net: ContTempNetwork,
+    aggregation_window: int,
+) -> tuple[ContTempNetwork, int]:
     source_nodes = []
     target_nodes = []
     starting_times = []
@@ -25,46 +45,81 @@ for data_index in range(len(dataset)):
 
     snapshot_starts = list(
         range(
-            snapshots_to_skip_at_start * aggregation_window,
+            SNAPSHOTS_TO_SKIP_AT_START * aggregation_window,
             int(net.times[-1] - aggregation_window),
             aggregation_window,
         )
     )
 
-    for i in snapshot_starts:  # - aggregation_window to avoid tail
-        matrix_snapshot = net.compute_static_adjacency_matrix(start_time=i, end_time=i+aggregation_window).toarray()
-        #snapshots.append(matrix_snapshot)
+    for snapshot_start in snapshot_starts:
+        snapshot_end = snapshot_start + aggregation_window
+        matrix_snapshot = net.compute_static_adjacency_matrix(
+            start_time=snapshot_start,
+            end_time=snapshot_end,
+        ).toarray()
 
         matrix_snapshot = (matrix_snapshot > 0).astype(int)
         source_nodes_snapshot = np.nonzero(matrix_snapshot)[0]
         target_nodes_snapshot = np.nonzero(matrix_snapshot)[1]
-        starting_times_snapshot = [i] * len(source_nodes_snapshot)
-        ending_times_snapshot = [i+aggregation_window] * len(source_nodes_snapshot)
+        starting_times_snapshot = [snapshot_start] * len(source_nodes_snapshot)
+        ending_times_snapshot = [snapshot_end] * len(source_nodes_snapshot)
 
         source_nodes += list(source_nodes_snapshot)
         target_nodes += list(target_nodes_snapshot)
         starting_times += starting_times_snapshot
         ending_times += ending_times_snapshot
 
-    snap_net = ContTempNetwork(source_nodes=source_nodes,
-                        target_nodes=target_nodes,
-                        starting_times=starting_times,
-                        ending_times=ending_times,
-                        merge_overlapping_events=True)
+    snap_net = ContTempNetwork(
+        source_nodes=source_nodes,
+        target_nodes=target_nodes,
+        starting_times=starting_times,
+        ending_times=ending_times,
+        merge_overlapping_events=True,
+    )
 
-    tnet = {}
-    tnet['tnet'] = snap_net
-    #tnet['snapshots'] = snapshots
-    tnet['aggregation_window'] = aggregation_window
-    num_snapshots = len(snapshot_starts)
-    aggregated_breakpoints = sorted({
-        int(breakpoint // aggregation_window) - snapshots_to_skip_at_start
-        for breakpoint in breakpoints
-        if 0 <= int(breakpoint // aggregation_window) - snapshots_to_skip_at_start < num_snapshots
-    })
-    tnet['bkps'] = aggregated_breakpoints
-    tnet['n_bkps'] = len(aggregated_breakpoints)
-    sanpshots_dataset.append(tnet)
+    return snap_net, len(snapshot_starts)
 
 
-pickle.dump(sanpshots_dataset, open('data/block1activity_snapshots.pkl', 'wb'))
+def convert_dataset(dataset: list[dict[str, object]]) -> list[dict[str, object]]:
+    snapshots_dataset = []
+
+    for entry in dataset:
+        net = entry["tnet"]
+        breakpoints = [float(breakpoint) for breakpoint in entry["bkps"]]
+
+        snap_net, num_snapshots = build_snapshot_network(
+            net=net,
+            aggregation_window=AGGREGATION_WINDOW,
+        )
+        aggregated_breakpoints = aggregate_breakpoints(
+            breakpoints=breakpoints,
+            aggregation_window=AGGREGATION_WINDOW,
+            num_snapshots=num_snapshots,
+        )
+
+        snapshots_dataset.append(
+            {
+                "tnet": snap_net,
+                "aggregation_window": AGGREGATION_WINDOW,
+                "bkps": aggregated_breakpoints,
+                "n_bkps": len(aggregated_breakpoints),
+            }
+        )
+
+    return snapshots_dataset
+
+
+def main() -> None:
+    for input_path, output_path in DATASET_PATHS:
+        with open(input_path, "rb") as handle:
+            dataset = pickle.load(handle)
+
+        snapshots_dataset = convert_dataset(dataset)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "wb") as handle:
+            pickle.dump(snapshots_dataset, handle)
+
+
+if __name__ == "__main__":
+    main()
