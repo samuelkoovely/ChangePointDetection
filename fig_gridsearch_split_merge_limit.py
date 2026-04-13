@@ -6,6 +6,9 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib import colormaps
+from matplotlib.lines import Line2D
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from scipy.sparse.csgraph import connected_components
 
 import auxiliary_functions
@@ -24,6 +27,14 @@ LIMIT_RESULTS_CANDIDATES = (
 DEFAULT_WINDOWS = [1.0, 5.0, 10.0]
 DEFAULT_LAMBDAS = np.asarray([0.1, 1.0, 10.0], dtype=float)
 OUTPUT_PATH = Path("./figures/fig_gridsearch_split_merge_limit.pdf")
+LIMIT_STYLE = {
+    "color": "black",
+    "linestyle": "--",
+    "linewidth": 1.8,
+    "zorder": 5,
+}
+TIME_INTERVALS = [(0, 100), (100, 200), (200, 300)]
+INSET_POSITIONS = [0.06, 0.37, 0.68]
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,6 +88,13 @@ def load_split_merge_network(signal_metadata: dict | None = None):
     if signal_metadata is not None and signal_metadata.get("network_path") is not None:
         network_path = Path(signal_metadata["network_path"])
     return load_pickle(Path(network_path))
+
+
+def compute_interval_matrices(network, intervals):
+    return [
+        network.compute_static_adjacency_matrix(start_time=start, end_time=end).toarray()
+        for start, end in intervals
+    ]
 
 
 def window_key(window: float) -> str:
@@ -444,6 +462,85 @@ def format_lambda_label(lamda: float) -> str:
     return f"$\\lambda$ = {lamda:.2e}"
 
 
+def make_inset_cmap():
+    cmap = colormaps["inferno"].copy()
+    cmap.set_bad(color="white")
+    return cmap
+
+
+def plot_window_panel(
+    ax,
+    window: float,
+    lambdas: np.ndarray,
+    colors,
+    signal_base: Path,
+    signal_subdir: str,
+    limit_base: Path,
+    network,
+    matrices,
+    inset_cmap,
+):
+    for color, lamda in zip(colors, lambdas):
+        payload = load_signal_payload(
+            window=window,
+            lamda=lamda,
+            signal_base=signal_base,
+            signal_subdir=signal_subdir,
+        )
+        t_samples = np.asarray(payload["t_samples"], dtype=float)
+        signal = extract_signal_array(payload, lamda=lamda)
+        ax.plot(
+            t_samples,
+            signal,
+            color=color,
+            alpha=0.85,
+        )
+
+    limit_payload = load_or_compute_limit_payload(
+        window=window,
+        limit_base=limit_base,
+        network=network,
+    )
+    limit_curve = extract_limit_array(limit_payload)
+    ax.plot(limit_curve[:, 0], limit_curve[:, 1], **LIMIT_STYLE)
+
+    ax.set_xlim(-5, 310)
+    ax.set_ylim(-2, 5)
+    ax.set_xlabel("t [s]")
+    ax.set_title(window_title(window))
+    ax.set_box_aspect(1)
+
+    for matrix, pos, (start, end) in zip(matrices, INSET_POSITIONS, TIME_INTERVALS):
+        inset_ax = inset_axes(
+            ax,
+            width="20%",
+            height="20%",
+            loc="lower left",
+            bbox_to_anchor=(pos, 0.05, 1, 1),
+            bbox_transform=ax.transAxes,
+        )
+        masked_matrix = np.ma.masked_where(matrix == 0, matrix)
+        positive_entries = matrix[matrix > 0]
+        vmax = positive_entries.max() if positive_entries.size else 1.0
+
+        inset_ax.matshow(
+            masked_matrix,
+            cmap=inset_cmap,
+            aspect="equal",
+            vmin=0,
+            vmax=vmax,
+            interpolation="nearest",
+        )
+        inset_ax.set_facecolor("white")
+        inset_ax.set_xticks([])
+        inset_ax.set_yticks([])
+        inset_ax.set_title(f"{start} ≤ t < {end}", fontsize=8)
+        for spine in inset_ax.spines.values():
+            spine.set_visible(True)
+            spine.set_linewidth(0.8)
+            spine.set_edgecolor("black")
+
+
 def main() -> None:
     args = parse_args()
     signal_base = resolve_signal_base(requested_base=args.signal_base)
@@ -465,66 +562,61 @@ def main() -> None:
     )
     network = load_split_merge_network(signal_metadata)
     colors = auxiliary_functions.generate_plasma_colors(len(selected_lambdas))
+    interval_matrices = compute_interval_matrices(network, TIME_INTERVALS)
+    inset_cmap = make_inset_cmap()
+    legend_entry_count = len(selected_lambdas) + 1
+    fig_width = max(13.0, 4.0 * len(windows), 1.2 * legend_entry_count + 4.0)
 
-    fig_width = max(12.0, 3.7 * len(windows))
-    fig, axes = plt.subplots(1, len(windows), figsize=(fig_width, 4.8), sharey=False)
-    if len(windows) == 1:
-        axes = [axes]
+    fig = plt.figure(figsize=(fig_width, 5.4))
+    gs = fig.add_gridspec(1, len(windows))
+    axes = np.atleast_1d(gs.subplots(sharey=True))
 
-    for panel_idx, (ax, window) in enumerate(zip(axes, windows)):
-        for color, lamda in zip(colors, selected_lambdas):
-            payload = load_signal_payload(
-                window=window,
-                lamda=lamda,
-                signal_base=signal_base,
-                signal_subdir=signal_subdir,
-            )
-            t_samples = np.asarray(payload["t_samples"], dtype=float)
-            signal = extract_signal_array(payload, lamda=lamda)
-            ax.plot(
-                t_samples,
-                signal,
-                color=color,
-                alpha=0.85,
-                label=format_lambda_label(lamda),
-            )
-
-        limit_payload = load_or_compute_limit_payload(
+    for ax, window in zip(axes, windows):
+        plot_window_panel(
+            ax=ax,
             window=window,
+            lambdas=selected_lambdas,
+            colors=colors,
+            signal_base=signal_base,
+            signal_subdir=signal_subdir,
             limit_base=limit_base,
             network=network,
+            matrices=interval_matrices,
+            inset_cmap=inset_cmap,
         )
-        limit_curve = extract_limit_array(limit_payload)
-        ax.plot(
-            limit_curve[:, 0],
-            limit_curve[:, 1],
-            color="black",
-            linestyle="--",
-            linewidth=1.8,
-            label="Upper Bound" if panel_idx == 0 else None,
-        )
-
-        ax.set_title(window_title(window))
-        ax.set_xlabel("Time (s)")
 
     axes[0].set_ylabel("Entropy")
+    for ax in axes[1:]:
+        ax.tick_params(labelleft=False)
 
-    legend_handles = list(axes[0].lines)
-    legend_labels = [line.get_label() for line in legend_handles]
+    legend_handles = [
+        Line2D([0], [0], color=color, linewidth=1.8, label=format_lambda_label(lamda))
+        for color, lamda in zip(colors, selected_lambdas)
+    ]
+    legend_handles.append(
+        Line2D(
+            [0],
+            [0],
+            color=LIMIT_STYLE["color"],
+            linestyle=LIMIT_STYLE["linestyle"],
+            linewidth=LIMIT_STYLE["linewidth"],
+            label="Upper bound",
+        )
+    )
     fig.legend(
-        legend_handles,
-        legend_labels,
+        handles=legend_handles,
         loc="lower center",
         bbox_to_anchor=(0.5, 0.02),
         ncol=len(legend_handles),
         fontsize="small",
     )
 
-    fig.tight_layout(rect=(0, 0.12, 1, 1))
+    fig.subplots_adjust(left=0.07, right=0.995, top=0.92, bottom=0.17, wspace=0.18)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.output, format="pdf", dpi=300, bbox_inches="tight")
     if "agg" not in plt.get_backend().lower():
         plt.show()
+    plt.close(fig)
 
 
 if __name__ == "__main__":

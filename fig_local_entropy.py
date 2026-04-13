@@ -442,6 +442,7 @@ def plot_network_panel(
     ax.set_ylim(-2, 5)
     ax.set_xlabel("t [s]")
     ax.set_title(panel_title, loc="left", fontsize=14)
+    ax.set_box_aspect(1)
 
     for matrix, pos, (start, end) in zip(matrices, inset_positions, time_intervals):
         inset_ax = inset_axes(
@@ -541,10 +542,8 @@ def render_window_figure(
     forward_colors = auxiliary_functions.generate_plasma_colors(
         len(selected_forward_lambdas)
     )
-    legend_entry_count = len(selected_forward_lambdas) + 2
-    fig_width = max(12.0, 4.0 * len(panel_specs), 1.2 * legend_entry_count + 4.0)
 
-    fig = plt.figure(figsize=(fig_width, 5.2))
+    fig = plt.figure(figsize=(13, 5.4))
     gs = fig.add_gridspec(1, 3)
     axes = np.atleast_1d(gs.subplots(sharey=True))
     inset_cmap = make_inset_cmap()
@@ -610,7 +609,7 @@ def render_window_figure(
     fig.suptitle(f"{window_key(window)} s window", fontsize=14, y=0.98)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.subplots_adjust(left=0.07, right=0.995, top=0.88, bottom=0.17, wspace=0.18)
+    fig.subplots_adjust(left=0.07, right=0.995, top=0.89, bottom=0.17, wspace=0.18)
     fig.savefig(output_path, format="pdf", dpi=300, bbox_inches="tight")
     if "agg" not in plt.get_backend().lower():
         plt.show()
