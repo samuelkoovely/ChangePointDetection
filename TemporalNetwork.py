@@ -1313,6 +1313,12 @@ class ContTempNetwork(object):
                 if save_adjacencies:
                     self.adjacencies.append(A.copy())
         else: #case random_walk is False
+            # For the combinatorial Laplacian L = D - A, isolated nodes must
+            # keep zero degree. Starting from the identity would incorrectly
+            # set untouched isolated-node diagonals to 1 and make exp(-tau L)
+            # substochastic on those rows.
+            Dm1 = I.copy()
+            Dm1.data[:] = 0.0
             if self._k_start_laplacians > 0:
                 # initial conditions, we have to find the adjacency mat just before
                 # _k_start_laplacians. 
@@ -1337,12 +1343,12 @@ class ContTempNetwork(object):
                             degrees[event.target_nodes] += 1
                     
                     if degrees[event.source_nodes] == 0:
-                            Dm1.data[event.source_nodes] = 1
+                            Dm1.data[event.source_nodes] = 0
                     else:
                         Dm1.data[event.source_nodes] = degrees[event.source_nodes]
                         
                     if degrees[event.target_nodes] == 0:
-                        Dm1.data[event.target_nodes] = 1
+                        Dm1.data[event.target_nodes] = 0
                     else:
                         Dm1.data[event.target_nodes] = degrees[event.target_nodes]
 
