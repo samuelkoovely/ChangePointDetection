@@ -9,7 +9,12 @@ import numpy as np
 import EDLDE
 
 
-NUM_SAMPLES = 5
+TRAIN_NUM_SAMPLES = 5
+TEST_NUM_SAMPLES = 10
+
+TRAIN_RANDOM_SEED = 34
+TEST_RANDOM_SEED = 1034
+TEST_SAMPLE_INDEX_OFFSET = 1000
 
 n_per_group = 100
 n_groups = 1
@@ -32,13 +37,15 @@ BREAKPOINT_UPPER_BOUND = 170
 
 EVENT_SEED_BASE = 1415
 SBM_SEED_BASE = 271
-OUTPUT_PATH = Path("data/multibkps_block2activities.pkl")
+
+TRAIN_OUTPUT_PATH = Path("data/multibkps_block2activities.pkl")
+TEST_OUTPUT_PATH = Path("data/multibkps_block2activities_test.pkl")
 
 
-def sample_breakpoints() -> list[int]:
-    num_breakpoints = rd.randint(MIN_NUM_BREAKPOINTS, MAX_NUM_BREAKPOINTS)
+def sample_breakpoints(rng: rd.Random) -> list[int]:
+    num_breakpoints = rng.randint(MIN_NUM_BREAKPOINTS, MAX_NUM_BREAKPOINTS)
     return sorted(
-        rd.sample(
+        rng.sample(
             range(BREAKPOINT_LOWER_BOUND, BREAKPOINT_UPPER_BOUND + 1),
             num_breakpoints,
         )
@@ -73,8 +80,7 @@ def generate_piecewise_activity(
     return number_of_events, np.concatenate(all_starts), np.concatenate(all_ends)
 
 
-def generate_sample(sample_index: int) -> dict[str, object]:
-    breakpoints = sample_breakpoints()
+def generate_sample(sample_index: int, breakpoints: list[int]) -> dict[str, object]:
     number_of_events, starts, ends = generate_piecewise_activity(sample_index, breakpoints)
 
     tnet = EDLDE.generate_smooth_SBM(
@@ -116,13 +122,40 @@ def generate_sample(sample_index: int) -> dict[str, object]:
     }
 
 
-def main() -> None:
-    rd.seed(34)
-    tnets = [generate_sample(sample_index) for sample_index in range(NUM_SAMPLES)]
+def generate_dataset(
+    num_samples: int,
+    random_seed: int,
+    sample_index_offset: int = 0,
+) -> list[dict[str, object]]:
+    rng = rd.Random(random_seed)
+    return [
+        generate_sample(
+            sample_index=sample_index_offset + sample_number,
+            breakpoints=sample_breakpoints(rng),
+        )
+        for sample_number in range(num_samples)
+    ]
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_PATH, "wb") as handle:
-        pickle.dump(tnets, handle)
+
+def write_dataset(dataset: list[dict[str, object]], output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "wb") as handle:
+        pickle.dump(dataset, handle)
+
+
+def main() -> None:
+    training_dataset = generate_dataset(
+        num_samples=TRAIN_NUM_SAMPLES,
+        random_seed=TRAIN_RANDOM_SEED,
+    )
+    test_dataset = generate_dataset(
+        num_samples=TEST_NUM_SAMPLES,
+        random_seed=TEST_RANDOM_SEED,
+        sample_index_offset=TEST_SAMPLE_INDEX_OFFSET,
+    )
+
+    write_dataset(training_dataset, TRAIN_OUTPUT_PATH)
+    write_dataset(test_dataset, TEST_OUTPUT_PATH)
 
 
 if __name__ == "__main__":

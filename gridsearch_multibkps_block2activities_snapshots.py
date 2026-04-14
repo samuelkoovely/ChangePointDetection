@@ -2,7 +2,8 @@ import numpy as np
 import pickle
 from gridsearch_score_snapshots import CPSample, extract_true_change_points, grid_search
 
-PENALTY = 0.5
+# `ruptures` requires strictly positive penalties.
+PENALTIES = np.linspace(0.01, 2.0, 10)
 
 with open("data/multibkps_block2activities_snapshots.pkl", "rb") as f:
         dataset = pickle.load(f)
@@ -43,16 +44,17 @@ summary = grid_search(
     signals_outdir="./gridsearch_results/multibkps_block2activities_snapshots/signals",
     selection_metric="f1",
     stopping_rule="penalty",
-    penalty=PENALTY,
+    penalties=PENALTIES,
 )
 
 print("Number of samples:", len(training_samples))
 print("Score array shape:", summary["score_array"].shape)
 print("Selection metric:", summary["selection_metric"])
 print("Stopping rule:", summary["stopping_rule"])
-print("Penalty:", summary["penalty"])
+print("Penalties:", summary["penalties"])
 print("Best lamda:", summary["best_lamda"])
 print("Best window:", summary["best_window"])
+print("Best penalty:", summary["best_penalty"])
 print("Best selected score:", summary["best_score"])
 print("Best mean F1:", summary["best_f1"])
 print("Best mean Hausdorff:", summary["best_hausdorff"])

@@ -8,8 +8,16 @@ import numpy as np
 from TemporalNetwork import ContTempNetwork
 
 
-INPUT_PATH = Path("data/multibkps_block2activities.pkl")
-OUTPUT_PATH = Path("data/multibkps_block2activities_snapshots.pkl")
+DATASET_PATHS = (
+    (
+        Path("data/multibkps_block2activities.pkl"),
+        Path("data/multibkps_block2activities_snapshots.pkl"),
+    ),
+    (
+        Path("data/multibkps_block2activities_test.pkl"),
+        Path("data/multibkps_block2activities_snapshots_test.pkl"),
+    ),
+)
 AGGREGATION_WINDOW = 4
 SNAPSHOTS_TO_SKIP_AT_START = 1
 
@@ -32,7 +40,10 @@ def aggregate_breakpoints(
     ]
 
 
-def build_snapshot_network(net: ContTempNetwork, aggregation_window: int) -> tuple[ContTempNetwork, int]:
+def build_snapshot_network(
+    net: ContTempNetwork,
+    aggregation_window: int,
+) -> tuple[ContTempNetwork, int]:
     source_nodes = []
     target_nodes = []
     starting_times = []
@@ -75,10 +86,7 @@ def build_snapshot_network(net: ContTempNetwork, aggregation_window: int) -> tup
     return snap_net, len(snapshot_starts)
 
 
-def main() -> None:
-    with open(INPUT_PATH, "rb") as handle:
-        dataset = pickle.load(handle)
-
+def convert_dataset(dataset: list[dict[str, object]]) -> list[dict[str, object]]:
     snapshots_dataset = []
 
     for entry in dataset:
@@ -104,9 +112,19 @@ def main() -> None:
             }
         )
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_PATH, "wb") as handle:
-        pickle.dump(snapshots_dataset, handle)
+    return snapshots_dataset
+
+
+def main() -> None:
+    for input_path, output_path in DATASET_PATHS:
+        with open(input_path, "rb") as handle:
+            dataset = pickle.load(handle)
+
+        snapshots_dataset = convert_dataset(dataset)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "wb") as handle:
+            pickle.dump(snapshots_dataset, handle)
 
 
 if __name__ == "__main__":

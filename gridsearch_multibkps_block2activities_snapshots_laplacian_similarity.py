@@ -7,8 +7,8 @@ from gridsearch_block2activities_snapshots_laplacian_similarity import (
 )
 from gridsearch_score_snapshots import extract_true_change_points
 
-
-PENALTY = 0.5
+# `ruptures` requires strictly positive penalties.
+PENALTIES = np.linspace(0.01, 2.0, 10)
 
 
 with open("data/multibkps_block2activities_snapshots.pkl", "rb") as f:
@@ -50,7 +50,7 @@ summary = grid_search_laplacian_similarity(
     signals_outdir="./gridsearch_results/multibkps_block2activities_snapshots_laplacians/signals",
     selection_metric="f1",
     stopping_rule="penalty",
-    penalty=PENALTY,
+    penalties=PENALTIES,
 )
 
 print("Number of samples:", len(training_samples))
@@ -58,9 +58,10 @@ print("Score array shape:", summary["score_array"].shape)
 print("Backend used:", summary["backend_used"])
 print("Selection metric:", summary["selection_metric"])
 print("Stopping rule:", summary["stopping_rule"])
-print("Penalty:", summary["penalty"])
+print("Penalties:", summary["penalties"])
 print("Best n_eigen:", summary["best_n_eigen"])
 print("Best window_length:", summary["best_window_length"])
+print("Best penalty:", summary["best_penalty"])
 print("Best selected score:", summary["best_score"])
 print("Best mean F1:", summary["best_f1"])
 print("Best mean Hausdorff:", summary["best_hausdorff"])
