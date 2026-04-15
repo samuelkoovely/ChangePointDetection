@@ -298,19 +298,20 @@ def compute_window_limit_payload(network, motif_name, window):
     k_samples = np.flatnonzero(
         np.asarray(network.times, dtype=float) < network.times[-1] - float(window)
     ).astype(int)
-    t_samples = np.asarray(network.times[k_samples], dtype=float)
-    values = np.empty(len(t_samples), dtype=float)
+    start_times = np.asarray(network.times[k_samples], dtype=float)
+    t_samples = start_times + 0.5 * float(window)
+    values = np.empty(len(start_times), dtype=float)
 
-    for idx, start_time in enumerate(t_samples):
+    for idx, start_time in enumerate(start_times):
         values[idx] = compute_window_component_log_sum(
             network=network,
             start_time=float(start_time),
             window_seconds=float(window),
         )
-        if (idx + 1) % 250 == 0 or idx + 1 == len(t_samples):
+        if (idx + 1) % 250 == 0 or idx + 1 == len(start_times):
             print(
                 f"{motif_name} limit, window={float(window):g}: "
-                f"{idx + 1}/{len(t_samples)} samples"
+                f"{idx + 1}/{len(start_times)} samples"
             )
 
     time_limit_array = (
@@ -465,16 +466,12 @@ def plot_network_panel(
     inset_positions,
     inset_cmap,
     backward_curve=None,
-    limit_curve=None,
 ):
     for color, curve in zip(forward_colors, forward_curves):
         ax.plot(curve[0], curve[1], color=color, alpha=1)
 
     if backward_curve is not None:
         ax.plot(backward_curve[0], backward_curve[1], **BACKWARD_CURVE_STYLE)
-
-    if limit_curve is not None:
-        ax.plot(limit_curve[:, 0], limit_curve[:, 1], **LIMIT_STYLE)
 
     ax.set_xlim(-5, 310)
     ax.set_ylim(-2, 5)
@@ -567,18 +564,6 @@ def main():
         if backward_results_base is not None
         else {}
     )
-    limit_curves = {
-        key: extract_limit_array(
-            load_or_compute_limit_payload(
-                motif_name=key,
-                network=networks[key],
-                results_base=forward_results_base,
-                curve_kind=args.curve_kind,
-                window=args.window,
-            )
-        )
-        for key in networks
-    }
 
     reference_motif = panel_specs[0]["key"]
     forward_reference_metadata = load_metadata(
@@ -624,7 +609,6 @@ def main():
             inset_positions=inset_positions,
             inset_cmap=inset_cmap,
             backward_curve=backward_curve,
-            limit_curve=limit_curves.get(key),
         )
 
     axes[0].set_ylabel("Entropy")
@@ -645,16 +629,6 @@ def main():
                 label="Backward Entropy",
             )
         )
-    legend_handles.append(
-        Line2D(
-            [0],
-            [0],
-            color=LIMIT_STYLE["color"],
-            linestyle=LIMIT_STYLE["linestyle"],
-            linewidth=LIMIT_STYLE["linewidth"],
-            label="Limit Statistic",
-        )
-    )
     fig.legend(
         handles=legend_handles,
         loc="lower center",

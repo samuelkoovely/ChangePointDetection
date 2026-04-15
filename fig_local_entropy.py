@@ -89,7 +89,8 @@ def load_pickle(path: Path):
 
 
 def load_metadata(motif_name: str, results_base: Path) -> dict:
-    return load_pickle(results_base / motif_name / "metadata.pkl")
+    metadata_path = results_base / motif_name / "metadata.pkl"
+    return load_pickle(metadata_path)
 
 
 def resolve_results_base_for_direction(
@@ -310,19 +311,20 @@ def compute_window_limit_payload(network, motif_name: str, window: float) -> dic
     k_samples = np.flatnonzero(
         np.asarray(network.times, dtype=float) < network.times[-1] - float(window)
     ).astype(int)
-    t_samples = np.asarray(network.times[k_samples], dtype=float)
-    values = np.empty(len(t_samples), dtype=float)
+    start_times = np.asarray(network.times[k_samples], dtype=float)
+    t_samples = start_times + 0.5 * float(window)
+    values = np.empty(len(start_times), dtype=float)
 
-    for idx, start_time in enumerate(t_samples):
+    for idx, start_time in enumerate(start_times):
         values[idx] = compute_component_log_sum(
             network=network,
             start_time=float(start_time),
             window_seconds=float(window),
         )
-        if (idx + 1) % 250 == 0 or idx + 1 == len(t_samples):
+        if (idx + 1) % 250 == 0 or idx + 1 == len(start_times):
             print(
                 f"{motif_name} limit, window={window_key(window)}: "
-                f"{idx + 1}/{len(t_samples)} samples"
+                f"{idx + 1}/{len(start_times)} samples"
             )
 
     time_limit_array = (
@@ -426,17 +428,9 @@ def plot_network_panel(
     time_intervals,
     inset_positions,
     inset_cmap,
-    backward_curve=None,
-    limit_curve=None,
 ):
     for color, curve in zip(forward_colors, forward_curves):
         ax.plot(curve[0], curve[1], color=color, alpha=1)
-
-    if backward_curve is not None:
-        ax.plot(backward_curve[0], backward_curve[1], **BACKWARD_CURVE_STYLE)
-
-    if limit_curve is not None:
-        ax.plot(limit_curve[:, 0], limit_curve[:, 1], **LIMIT_STYLE)
 
     ax.set_xlim(-5, 310)
     ax.set_ylim(-2, 5)
@@ -478,14 +472,13 @@ def plot_network_panel(
 def render_window_figure(
     window: float,
     forward_results_base: Path,
-    backward_results_base: Path | None,
     output_path: Path,
 ) -> None:
     networks = load_networks(results_base=forward_results_base)
     panel_specs = [
-        {"key": "merge_merge", "title": "(A)", "backward_index": 7},
-        {"key": "merge_split", "title": "(B)", "backward_index": 5},
-        {"key": "split_merge", "title": "(C)", "backward_index": 6},
+        {"key": "merge_merge", "title": "(A)"},
+        {"key": "merge_split", "title": "(B)"},
+        {"key": "split_merge", "title": "(C)"},
     ]
     inset_positions = [0.06, 0.37, 0.68]
     time_intervals = [(0, 100), (100, 200), (200, 300)]
@@ -501,31 +494,6 @@ def render_window_figure(
             window=window,
             reverse_time=False,
             network=networks[key],
-        )
-        for key in networks
-    }
-    backward_entropy = (
-        {
-            key: load_entropy_curves(
-                key,
-                results_base=backward_results_base,
-                window=window,
-                reverse_time=True,
-                network=networks[key],
-            )
-            for key in networks
-        }
-        if backward_results_base is not None
-        else {}
-    )
-    limit_curves = {
-        key: extract_limit_array(
-            load_or_compute_limit_payload(
-                motif_name=key,
-                network=networks[key],
-                results_base=forward_results_base,
-                window=window,
-            )
         )
         for key in networks
     }
@@ -554,10 +522,6 @@ def render_window_figure(
             forward_entropy[key],
             curve_indices=DEFAULT_CURVE_INDICES,
         )
-        backward_curve = select_single_curve(
-            backward_entropy.get(key, []),
-            preferred_index=spec.get("backward_index"),
-        )
         plot_network_panel(
             ax=ax,
             forward_curves=selected_curves,
@@ -567,8 +531,6 @@ def render_window_figure(
             time_intervals=time_intervals,
             inset_positions=inset_positions,
             inset_cmap=inset_cmap,
-            backward_curve=backward_curve,
-            limit_curve=limit_curves.get(key),
         )
 
     axes[0].set_ylabel("Entropy")
@@ -579,26 +541,6 @@ def render_window_figure(
         Line2D([0], [0], color=color, linewidth=1.8, label=format_lambda_label(lamda))
         for color, lamda in zip(forward_colors, selected_forward_lambdas)
     ]
-    if backward_results_base is not None:
-        legend_handles.append(
-            Line2D(
-                [0],
-                [0],
-                color=BACKWARD_CURVE_STYLE["color"],
-                linewidth=BACKWARD_CURVE_STYLE["linewidth"],
-                label="Backward Entropy",
-            )
-        )
-    legend_handles.append(
-        Line2D(
-            [0],
-            [0],
-            color=LIMIT_STYLE["color"],
-            linestyle=LIMIT_STYLE["linestyle"],
-            linewidth=LIMIT_STYLE["linewidth"],
-            label="Upper bound",
-        )
-    )
     fig.legend(
         handles=legend_handles,
         loc="lower center",
@@ -621,16 +563,11 @@ def main() -> None:
     windows = list(dict.fromkeys(float(window) for window in args.windows))
 
     forward_results_base = resolve_results_base_for_direction(reverse_time=False)
-    backward_results_base = resolve_results_base_for_direction(
-        reverse_time=True,
-        allow_missing=True,
-    )
 
     for window in windows:
         render_window_figure(
             window=window,
             forward_results_base=forward_results_base,
-            backward_results_base=backward_results_base,
             output_path=output_path_for_window(
                 window=window,
                 output_dir=args.output_dir,
