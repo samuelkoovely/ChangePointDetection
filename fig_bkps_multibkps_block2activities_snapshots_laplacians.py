@@ -22,9 +22,26 @@ def resolve_existing_path(path_str: str | Path) -> Path:
     return BASE_DIR / path
 
 
-def get_best_signal_metadata(results: dict) -> tuple[int, int, list[list[float]], list[str]]:
+def find_matching_float_key(mapping: dict, target: float, name: str) -> float:
+    for key in mapping:
+        if np.isclose(float(key), float(target)):
+            return float(key)
+    raise ValueError(f'Could not find {name}={target} in saved results.')
+
+
+def find_matching_int_key(mapping: dict, target: int, name: str) -> int:
+    for key in mapping:
+        if int(key) == int(target):
+            return int(key)
+    raise ValueError(f'Could not find {name}={target} in saved results.')
+
+
+def get_best_signal_metadata(
+    results: dict,
+) -> tuple[int, int, float | None, list[list[float]], list[str]]:
     best_n_eigen = results.get('best_n_eigen')
     best_window_length = results.get('best_window_length')
+    best_penalty = results.get('best_penalty', results.get('penalty'))
 
     if best_n_eigen is None or best_window_length is None:
         best_index = results.get('best_index')
@@ -32,22 +49,59 @@ def get_best_signal_metadata(results: dict) -> tuple[int, int, list[list[float]]
             raise ValueError('No best n_eigen/window_length found in grid-search results.')
         best_n_eigen = int(results['n_eigens'][best_index[0]])
         best_window_length = int(results['window_lengths'][best_index[1]])
+        penalties = results.get('penalties')
+        if best_penalty is None and penalties is not None and len(best_index) > 2:
+            best_penalty = float(penalties[best_index[2]])
 
     best_result = None
-    for n_eigen_result in results['n_eigen_results']:
-        if int(n_eigen_result['n_eigen']) == int(best_n_eigen):
+    results_by_n_eigen = results.get('results_by_n_eigen')
+    if isinstance(results_by_n_eigen, dict) and len(results_by_n_eigen) > 0:
+        n_eigen_key = find_matching_int_key(results_by_n_eigen, int(best_n_eigen), 'n_eigen')
+        n_eigen_result = results_by_n_eigen[n_eigen_key]
+        if isinstance(n_eigen_result, dict) and best_penalty is not None:
+            penalty_key = find_matching_float_key(n_eigen_result, float(best_penalty), 'penalty')
+            best_result = n_eigen_result[penalty_key]
+        else:
             best_result = n_eigen_result
-            break
 
     if best_result is None:
-        raise ValueError(f'Could not find n_eigen result for n_eigen={best_n_eigen}.')
+        for n_eigen_result in results['n_eigen_results']:
+            n_eigen_matches = int(n_eigen_result['n_eigen']) == int(best_n_eigen)
+            result_penalty = n_eigen_result.get('penalty')
+            penalty_matches = (
+                best_penalty is None
+                or (
+                    result_penalty is not None
+                    and np.isclose(float(result_penalty), float(best_penalty))
+                )
+            )
+            if n_eigen_matches and penalty_matches:
+                best_result = n_eigen_result
+                break
 
-    predicted_change_points = best_result['predicted_change_points'][int(best_window_length)]
+    if best_result is None:
+        raise ValueError(
+            'Could not find the best n_eigen/window_length/penalty combination in grid-search results.'
+        )
+
+    predicted_change_points_by_window = best_result['predicted_change_points']
+    window_key = find_matching_int_key(
+        predicted_change_points_by_window,
+        int(best_window_length),
+        'window_length',
+    )
+    predicted_change_points = predicted_change_points_by_window[window_key]
     sample_names = best_result.get('sample_names')
     if sample_names is None:
         sample_names = [f'sample_{i}' for i in range(len(predicted_change_points))]
 
-    return int(best_n_eigen), int(best_window_length), predicted_change_points, sample_names
+    return (
+        int(best_n_eigen),
+        int(best_window_length),
+        None if best_penalty is None else float(best_penalty),
+        predicted_change_points,
+        sample_names,
+    )
 
 
 def get_signals_outdir(results: dict) -> Path:
@@ -83,9 +137,8 @@ with open(RESULTS_PATH, 'rb') as handle:
 with open(DATASET_PATH, 'rb') as handle:
     dataset = pickle.load(handle)
 
-best_n_eigen, best_window_length, predicted_change_points, sample_names = get_best_signal_metadata(results)
+best_n_eigen, best_window_length, best_penalty, predicted_change_points, sample_names = get_best_signal_metadata(results)
 signals_outdir = get_signals_outdir(results)
-penalty = results.get('penalty')
 
 n_samples = min(5, len(dataset), len(predicted_change_points))
 fig, axes = plt.subplots(n_samples, 1, figsize=(14, 8), sharex=False)
@@ -134,8 +187,8 @@ for sample in range(n_samples):
     ax.set_ylabel(f's{sample}')
 
 title = f'Multi-bkps laplacians\nn_eigen={best_n_eigen}, window_length={best_window_length}'
-if penalty is not None:
-    title += f', penalty={float(penalty):g}'
+if best_penalty is not None:
+    title += f', penalty={best_penalty:g}'
 axes[0].set_title(title)
 axes[-1].set_xlabel('snapshot index')
 fig.tight_layout()

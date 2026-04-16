@@ -22,9 +22,19 @@ def resolve_existing_path(path_str: str | Path) -> Path:
     return BASE_DIR / path
 
 
-def get_best_signal_metadata(results: dict) -> tuple[float, float, list[list[int]], list[str]]:
+def find_matching_float_key(mapping: dict, target: float, name: str) -> float:
+    for key in mapping:
+        if np.isclose(float(key), float(target)):
+            return float(key)
+    raise ValueError(f'Could not find {name}={target} in saved results.')
+
+
+def get_best_signal_metadata(
+    results: dict,
+) -> tuple[float, float, float | None, list[list[int]], list[str]]:
     best_lamda = results.get('best_lamda')
     best_window = results.get('best_window')
+    best_penalty = results.get('best_penalty', results.get('penalty'))
 
     if best_lamda is None or best_window is None:
         best_index = results.get('best_index')
@@ -32,22 +42,59 @@ def get_best_signal_metadata(results: dict) -> tuple[float, float, list[list[int
             raise ValueError('No best lambda/window found in grid-search results.')
         best_lamda = float(results['lambdas'][best_index[0]])
         best_window = float(results['windows'][best_index[1]])
+        penalties = results.get('penalties')
+        if best_penalty is None and penalties is not None and len(best_index) > 2:
+            best_penalty = float(penalties[best_index[2]])
 
     best_result = None
-    for lambda_result in results['lambda_results']:
-        if np.isclose(float(lambda_result['lamda']), float(best_lamda)):
+    results_by_lambda = results.get('results_by_lambda')
+    if isinstance(results_by_lambda, dict) and len(results_by_lambda) > 0:
+        lambda_key = find_matching_float_key(results_by_lambda, float(best_lamda), 'lambda')
+        lambda_result = results_by_lambda[lambda_key]
+        if isinstance(lambda_result, dict) and best_penalty is not None:
+            penalty_key = find_matching_float_key(lambda_result, float(best_penalty), 'penalty')
+            best_result = lambda_result[penalty_key]
+        else:
             best_result = lambda_result
-            break
 
     if best_result is None:
-        raise ValueError(f'Could not find lambda result for lambda={best_lamda}.')
+        for lambda_result in results['lambda_results']:
+            lambda_matches = np.isclose(float(lambda_result['lamda']), float(best_lamda))
+            result_penalty = lambda_result.get('penalty')
+            penalty_matches = (
+                best_penalty is None
+                or (
+                    result_penalty is not None
+                    and np.isclose(float(result_penalty), float(best_penalty))
+                )
+            )
+            if lambda_matches and penalty_matches:
+                best_result = lambda_result
+                break
 
-    predicted_change_points = best_result['predicted_change_points'][float(best_window)]
+    if best_result is None:
+        raise ValueError(
+            'Could not find the best lambda/window/penalty combination in grid-search results.'
+        )
+
+    predicted_change_points_by_window = best_result['predicted_change_points']
+    window_key = find_matching_float_key(
+        predicted_change_points_by_window,
+        float(best_window),
+        'window',
+    )
+    predicted_change_points = predicted_change_points_by_window[window_key]
     sample_names = best_result.get('sample_names')
     if sample_names is None:
         sample_names = [f'sample_{i}' for i in range(len(predicted_change_points))]
 
-    return float(best_lamda), float(best_window), predicted_change_points, sample_names
+    return (
+        float(best_lamda),
+        float(best_window),
+        None if best_penalty is None else float(best_penalty),
+        predicted_change_points,
+        sample_names,
+    )
 
 
 def get_signals_outdir(results: dict) -> Path:
@@ -71,9 +118,8 @@ with open(RESULTS_PATH, 'rb') as handle:
 with open(DATASET_PATH, 'rb') as handle:
     dataset = pickle.load(handle)
 
-best_lamda, best_window, predicted_change_points, sample_names = get_best_signal_metadata(results)
+best_lamda, best_window, best_penalty, predicted_change_points, sample_names = get_best_signal_metadata(results)
 signals_outdir = get_signals_outdir(results)
-penalty = results.get('penalty')
 
 n_samples = min(5, len(dataset), len(predicted_change_points))
 fig, axes = plt.subplots(n_samples, 1, figsize=(14, 8), sharex=False)
@@ -122,8 +168,8 @@ for sample in range(n_samples):
     ax.set_ylabel(f's{sample}')
 
 title = f'Multi-bkps snapshots\nlambda={best_lamda:.5g}, window={best_window:g}'
-if penalty is not None:
-    title += f', penalty={float(penalty):g}'
+if best_penalty is not None:
+    title += f', penalty={best_penalty:g}'
 axes[0].set_title(title)
 axes[-1].set_xlabel('snapshot index')
 fig.tight_layout()
