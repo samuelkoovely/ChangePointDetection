@@ -299,6 +299,8 @@ def evaluate_precomputed_lambda_signals(
 
     return {
         "lamda": float(lamda),
+        "stopping_rule": stopping_rule,
+        "penalty": None if penalty is None else float(penalty),
         "windows": np.asarray(windows, dtype=float),
         "score_array": score_array,
         "per_window_f1_scores": per_window_f1_scores,
@@ -346,6 +348,7 @@ def grid_search(
     window_backend: str = "auto",
     stopping_rule: str = "n_bkps",
     penalty: float | None = None,
+    penalties: Sequence[float] | None = None,
 ) -> dict:
     """
     Run a parallel grid-search over all (lambda, window) pairs.
@@ -377,12 +380,24 @@ def grid_search(
         raise ValueError(
             "stopping_rule must be either 'n_bkps' or 'penalty'."
         )
-    if stopping_rule == "penalty" and penalty is None:
-        raise ValueError("penalty must be provided when stopping_rule='penalty'.")
+    if stopping_rule == "penalty":
+        if penalties is None:
+            if penalty is None:
+                raise ValueError(
+                    "penalties or penalty must be provided when stopping_rule='penalty'."
+                )
+            penalties = [penalty]
+        penalties = np.asarray(penalties, dtype=float)
+        if penalties.size == 0:
+            raise ValueError("penalties must contain at least one value.")
+        if np.any(penalties <= 0):
+            raise ValueError("All penalties must be strictly positive.")
+    else:
+        penalties = None
 
     t0 = time.time()
     t_signal_phase_start = time.time()
-    sample_signal_results = Parallel(n_jobs=n_jobs, backend=backend, verbose=verbose)(
+    signal_tasks = [
         delayed(compute_and_store_signals_for_sample)(
             sample=sample,
             sample_idx=sample_idx,
@@ -397,7 +412,23 @@ def grid_search(
             window_backend=window_backend,
         )
         for sample_idx, sample in enumerate(samples)
-    )
+    ]
+    backend_used = backend
+    try:
+        sample_signal_results = Parallel(
+            n_jobs=n_jobs,
+            backend=backend,
+            verbose=verbose,
+        )(signal_tasks)
+    except PermissionError:
+        if backend != "loky":
+            raise
+        backend_used = "threading"
+        sample_signal_results = Parallel(
+            n_jobs=n_jobs,
+            backend=backend_used,
+            verbose=verbose,
+        )(signal_tasks)
     lambda_signal_results = reorganize_sample_signal_results_by_lambda(
         sample_signal_results=sample_signal_results,
         samples=samples,
@@ -407,40 +438,81 @@ def grid_search(
     signal_generation_phase_seconds = time.time() - t_signal_phase_start
 
     t_detection_phase_start = time.time()
-    lambda_results = [
-        evaluate_precomputed_lambda_signals(
-            samples=samples,
-            lamda=float(signal_bundle["lamda"]),
-            windows=windows,
-            margin=margin,
-            signals_by_window=signal_bundle["signals_by_window"],
-            kernel=kernel,
-            stopping_rule=stopping_rule,
-            penalty=penalty,
-        )
-        for signal_bundle in lambda_signal_results
-    ]
-    detection_metrics_phase_seconds = time.time() - t_detection_phase_start
-    elapsed = time.time() - t0
+    lambda_results: list[dict[str, Any]] = []
 
-    score_array = np.empty((len(lambdas), len(windows)), dtype=float)
-    score_array[:] = np.nan
-    hausdorff_array = np.empty((len(lambdas), len(windows)), dtype=float)
-    hausdorff_array[:] = np.nan
+    if penalties is None:
+        score_array = np.empty((len(lambdas), len(windows)), dtype=float)
+        score_array[:] = np.nan
+        hausdorff_array = np.empty((len(lambdas), len(windows)), dtype=float)
+        hausdorff_array[:] = np.nan
 
-    results_by_lambda: dict[float, dict] = {}
-    for i, res in enumerate(lambda_results):
-        score_array[i, :] = res["score_array"]
-        hausdorff_array[i, :] = np.array(
-            [res["mean_hausdorff_per_window"][float(window)] for window in windows],
+        results_by_lambda: dict[float, dict[str, Any]] = {}
+        for i, signal_bundle in enumerate(lambda_signal_results):
+            result = evaluate_precomputed_lambda_signals(
+                samples=samples,
+                lamda=float(signal_bundle["lamda"]),
+                windows=windows,
+                margin=margin,
+                signals_by_window=signal_bundle["signals_by_window"],
+                kernel=kernel,
+                stopping_rule=stopping_rule,
+                penalty=None,
+            )
+            lambda_results.append(result)
+            score_array[i, :] = result["score_array"]
+            hausdorff_array[i, :] = np.array(
+                [
+                    result["mean_hausdorff_per_window"][float(window)]
+                    for window in windows
+                ],
+                dtype=float,
+            )
+            results_by_lambda[float(result["lamda"])] = result
+    else:
+        score_array = np.empty((len(lambdas), len(windows), len(penalties)), dtype=float)
+        score_array[:] = np.nan
+        hausdorff_array = np.empty(
+            (len(lambdas), len(windows), len(penalties)),
             dtype=float,
         )
-        results_by_lambda[float(res["lamda"])] = res
+        hausdorff_array[:] = np.nan
+
+        results_by_lambda = {
+            float(lamda): {} for lamda in lambdas
+        }
+        for i, signal_bundle in enumerate(lambda_signal_results):
+            lamda = float(signal_bundle["lamda"])
+            for k, penalty_value in enumerate(penalties):
+                result = evaluate_precomputed_lambda_signals(
+                    samples=samples,
+                    lamda=lamda,
+                    windows=windows,
+                    margin=margin,
+                    signals_by_window=signal_bundle["signals_by_window"],
+                    kernel=kernel,
+                    stopping_rule=stopping_rule,
+                    penalty=float(penalty_value),
+                )
+                lambda_results.append(result)
+                score_array[i, :, k] = result["score_array"]
+                hausdorff_array[i, :, k] = np.array(
+                    [
+                        result["mean_hausdorff_per_window"][float(window)]
+                        for window in windows
+                    ],
+                    dtype=float,
+                )
+                results_by_lambda[lamda][float(penalty_value)] = result
+    detection_metrics_phase_seconds = time.time() - t_detection_phase_start
+    elapsed = time.time() - t0
 
     num_samples = len(samples)
     num_lambda_jobs = len(lambdas)
     num_sample_jobs = len(samples)
-    num_parameter_pairs = len(lambdas) * len(windows)
+    num_penalty_jobs = 0 if penalties is None else len(penalties)
+    num_parameter_pairs = len(lambdas) * len(windows) * (
+        1 if penalties is None else len(penalties)
+    )
 
     if selection_metric == "f1":
         selection_array = score_array
@@ -448,6 +520,7 @@ def grid_search(
             best_index = None
             best_lamda = None
             best_window = None
+            best_penalty = None
             best_score = math.nan
             best_f1 = math.nan
             best_hausdorff = math.nan
@@ -456,6 +529,9 @@ def grid_search(
             best_index = np.unravel_index(best_flat, selection_array.shape)
             best_lamda = float(lambdas[best_index[0]])
             best_window = float(windows[best_index[1]])
+            best_penalty = (
+                None if penalties is None else float(penalties[best_index[2]])
+            )
             best_score = float(selection_array[best_index])
             best_f1 = float(score_array[best_index])
             best_hausdorff = float(hausdorff_array[best_index])
@@ -465,6 +541,7 @@ def grid_search(
             best_index = None
             best_lamda = None
             best_window = None
+            best_penalty = None
             best_score = math.nan
             best_f1 = math.nan
             best_hausdorff = math.nan
@@ -474,6 +551,7 @@ def grid_search(
                 best_index = None
                 best_lamda = None
                 best_window = None
+                best_penalty = None
                 best_score = math.nan
                 best_f1 = math.nan
                 best_hausdorff = math.nan
@@ -482,6 +560,9 @@ def grid_search(
                 best_index = np.unravel_index(best_flat, selection_array.shape)
                 best_lamda = float(lambdas[best_index[0]])
                 best_window = float(windows[best_index[1]])
+                best_penalty = (
+                    None if penalties is None else float(penalties[best_index[2]])
+                )
                 best_score = float(hausdorff_array[best_index])
                 best_f1 = float(score_array[best_index])
                 best_hausdorff = float(hausdorff_array[best_index])
@@ -489,6 +570,7 @@ def grid_search(
     summary = {
         "lambdas": lambdas,
         "windows": windows,
+        "penalties": penalties,
         "margin": float(margin),
         "sample_fraction": float(sample_fraction),
         "kernel": kernel,
@@ -496,11 +578,15 @@ def grid_search(
         "lin_t_s": int(lin_t_s),
         "window_backend": window_backend,
         "stopping_rule": stopping_rule,
-        "penalty": None if penalty is None else float(penalty),
+        "penalty": best_penalty,
+        "best_penalty": best_penalty,
         "parallel_axis": "sample",
+        "backend_requested": backend,
+        "backend_used": backend_used,
         "num_samples": num_samples,
         "num_lambda_jobs": num_lambda_jobs,
         "num_sample_jobs": num_sample_jobs,
+        "num_penalty_jobs": num_penalty_jobs,
         "num_parameter_pairs": num_parameter_pairs,
         "save_signals": save_signals,
         "signals_outdir": str(signals_outdir) if signals_outdir is not None else None,

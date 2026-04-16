@@ -351,6 +351,8 @@ def evaluate_precomputed_n_eigen_signals(
 
     return {
         "n_eigen": n_eigen,
+        "stopping_rule": stopping_rule,
+        "penalty": None if penalty is None else float(penalty),
         "window_lengths": np.asarray(window_lengths, dtype=int),
         "score_array": score_array,
         "per_window_f1_scores": per_window_f1_scores,
@@ -397,6 +399,7 @@ def grid_search_laplacian_similarity(
     selection_metric: str = "f1",
     stopping_rule: str = "n_bkps",
     penalty: float | None = None,
+    penalties: Sequence[float] | None = None,
 ) -> dict[str, Any]:
     """
     Run a parallel grid-search over all `(n_eigen, window_length)` pairs.
@@ -421,8 +424,20 @@ def grid_search_laplacian_similarity(
         raise ValueError("selection_metric must be either 'f1' or 'hausdorff'.")
     if stopping_rule not in {"n_bkps", "penalty"}:
         raise ValueError("stopping_rule must be either 'n_bkps' or 'penalty'.")
-    if stopping_rule == "penalty" and penalty is None:
-        raise ValueError("penalty must be provided when stopping_rule='penalty'.")
+    if stopping_rule == "penalty":
+        if penalties is None:
+            if penalty is None:
+                raise ValueError(
+                    "penalties or penalty must be provided when stopping_rule='penalty'."
+                )
+            penalties = [penalty]
+        penalties = np.asarray(penalties, dtype=float)
+        if penalties.size == 0:
+            raise ValueError("penalties must contain at least one value.")
+        if np.any(penalties <= 0):
+            raise ValueError("All penalties must be strictly positive.")
+    else:
+        penalties = None
 
     t0 = time.time()
     t_signal_phase_start = time.time()
@@ -456,38 +471,73 @@ def grid_search_laplacian_similarity(
     signal_generation_phase_seconds = time.time() - t_signal_phase_start
 
     t_detection_phase_start = time.time()
-    n_eigen_results = [
-        evaluate_precomputed_n_eigen_signals(
-            samples=samples,
-            n_eigen=int(signal_bundle["n_eigen"]),
-            window_lengths=window_lengths,
-            margin=margin,
-            signals_by_window=signal_bundle["signals_by_window"],
-            kernel=kernel,
-            stopping_rule=stopping_rule,
-            penalty=penalty,
-        )
-        for signal_bundle in n_eigen_signal_results
-    ]
-    detection_metrics_phase_seconds = time.time() - t_detection_phase_start
-    elapsed = time.time() - t0
+    n_eigen_results: list[dict[str, Any]] = []
+    if penalties is None:
+        score_array = np.empty((len(n_eigens), len(window_lengths)), dtype=float)
+        score_array[:] = np.nan
+        hausdorff_array = np.empty((len(n_eigens), len(window_lengths)), dtype=float)
+        hausdorff_array[:] = np.nan
 
-    score_array = np.empty((len(n_eigens), len(window_lengths)), dtype=float)
-    score_array[:] = np.nan
-    hausdorff_array = np.empty((len(n_eigens), len(window_lengths)), dtype=float)
-    hausdorff_array[:] = np.nan
-
-    results_by_n_eigen: dict[int, dict[str, Any]] = {}
-    for i, result in enumerate(n_eigen_results):
-        score_array[i, :] = result["score_array"]
-        hausdorff_array[i, :] = np.array(
-            [
-                result["mean_hausdorff_per_window_length"][int(window_length)]
-                for window_length in window_lengths
-            ],
+        results_by_n_eigen: dict[int, dict[str, Any]] = {}
+        for i, signal_bundle in enumerate(n_eigen_signal_results):
+            result = evaluate_precomputed_n_eigen_signals(
+                samples=samples,
+                n_eigen=int(signal_bundle["n_eigen"]),
+                window_lengths=window_lengths,
+                margin=margin,
+                signals_by_window=signal_bundle["signals_by_window"],
+                kernel=kernel,
+                stopping_rule=stopping_rule,
+                penalty=None,
+            )
+            n_eigen_results.append(result)
+            score_array[i, :] = result["score_array"]
+            hausdorff_array[i, :] = np.array(
+                [
+                    result["mean_hausdorff_per_window_length"][int(window_length)]
+                    for window_length in window_lengths
+                ],
+                dtype=float,
+            )
+            results_by_n_eigen[int(result["n_eigen"])] = result
+    else:
+        score_array = np.empty(
+            (len(n_eigens), len(window_lengths), len(penalties)),
             dtype=float,
         )
-        results_by_n_eigen[int(result["n_eigen"])] = result
+        score_array[:] = np.nan
+        hausdorff_array = np.empty(
+            (len(n_eigens), len(window_lengths), len(penalties)),
+            dtype=float,
+        )
+        hausdorff_array[:] = np.nan
+
+        results_by_n_eigen = {int(n_eigen): {} for n_eigen in n_eigens}
+        for i, signal_bundle in enumerate(n_eigen_signal_results):
+            n_eigen = int(signal_bundle["n_eigen"])
+            for penalty_index, penalty_value in enumerate(penalties):
+                result = evaluate_precomputed_n_eigen_signals(
+                    samples=samples,
+                    n_eigen=n_eigen,
+                    window_lengths=window_lengths,
+                    margin=margin,
+                    signals_by_window=signal_bundle["signals_by_window"],
+                    kernel=kernel,
+                    stopping_rule=stopping_rule,
+                    penalty=float(penalty_value),
+                )
+                n_eigen_results.append(result)
+                score_array[i, :, penalty_index] = result["score_array"]
+                hausdorff_array[i, :, penalty_index] = np.array(
+                    [
+                        result["mean_hausdorff_per_window_length"][int(window_length)]
+                        for window_length in window_lengths
+                    ],
+                    dtype=float,
+                )
+                results_by_n_eigen[n_eigen][float(penalty_value)] = result
+    detection_metrics_phase_seconds = time.time() - t_detection_phase_start
+    elapsed = time.time() - t0
 
     if selection_metric == "f1":
         selection_array = score_array
@@ -495,6 +545,7 @@ def grid_search_laplacian_similarity(
             best_index = None
             best_n_eigen = None
             best_window_length = None
+            best_penalty = None
             best_score = math.nan
             best_f1 = math.nan
             best_hausdorff = math.nan
@@ -503,6 +554,9 @@ def grid_search_laplacian_similarity(
             best_index = np.unravel_index(best_flat, selection_array.shape)
             best_n_eigen = int(n_eigens[best_index[0]])
             best_window_length = int(window_lengths[best_index[1]])
+            best_penalty = (
+                None if penalties is None else float(penalties[best_index[2]])
+            )
             best_score = float(selection_array[best_index])
             best_f1 = float(score_array[best_index])
             best_hausdorff = float(hausdorff_array[best_index])
@@ -512,6 +566,7 @@ def grid_search_laplacian_similarity(
             best_index = None
             best_n_eigen = None
             best_window_length = None
+            best_penalty = None
             best_score = math.nan
             best_f1 = math.nan
             best_hausdorff = math.nan
@@ -521,6 +576,7 @@ def grid_search_laplacian_similarity(
                 best_index = None
                 best_n_eigen = None
                 best_window_length = None
+                best_penalty = None
                 best_score = math.nan
                 best_f1 = math.nan
                 best_hausdorff = math.nan
@@ -529,6 +585,9 @@ def grid_search_laplacian_similarity(
                 best_index = np.unravel_index(best_flat, selection_array.shape)
                 best_n_eigen = int(n_eigens[best_index[0]])
                 best_window_length = int(window_lengths[best_index[1]])
+                best_penalty = (
+                    None if penalties is None else float(penalties[best_index[2]])
+                )
                 best_score = float(hausdorff_array[best_index])
                 best_f1 = float(score_array[best_index])
                 best_hausdorff = float(hausdorff_array[best_index])
@@ -536,16 +595,21 @@ def grid_search_laplacian_similarity(
     summary = {
         "window_lengths": window_lengths,
         "n_eigens": n_eigens,
+        "penalties": penalties,
         "margin": float(margin),
         "kernel": kernel,
         "normalize": bool(normalize),
         "stopping_rule": stopping_rule,
-        "penalty": None if penalty is None else float(penalty),
+        "penalty": best_penalty,
+        "best_penalty": best_penalty,
         "backend_requested": backend,
         "backend_used": backend_used,
         "num_samples": len(samples),
         "num_n_eigen_jobs": len(n_eigens),
-        "num_parameter_pairs": len(n_eigens) * len(window_lengths),
+        "num_penalty_jobs": 0 if penalties is None else len(penalties),
+        "num_parameter_pairs": len(n_eigens) * len(window_lengths) * (
+            1 if penalties is None else len(penalties)
+        ),
         "save_signals": save_signals,
         "signals_outdir": str(signals_outdir) if signals_outdir is not None else None,
         "selection_metric": selection_metric,

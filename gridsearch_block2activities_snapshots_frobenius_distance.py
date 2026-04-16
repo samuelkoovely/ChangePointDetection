@@ -252,6 +252,8 @@ def evaluate_precomputed_window_signals(
         )
 
     return {
+        "stopping_rule": stopping_rule,
+        "penalty": None if penalty is None else float(penalty),
         "window_lengths": np.asarray(window_lengths, dtype=int),
         "score_array": score_array,
         "per_window_f1_scores": per_window_f1_scores,
@@ -291,6 +293,7 @@ def grid_search_frobenius_distance(
     selection_metric: str = "f1",
     stopping_rule: str = "n_bkps",
     penalty: float | None = None,
+    penalties: Sequence[float] | None = None,
 ) -> dict[str, Any]:
     """
     Run a parallel grid-search over all candidate window lengths.
@@ -306,8 +309,20 @@ def grid_search_frobenius_distance(
         raise ValueError("selection_metric must be either 'f1' or 'hausdorff'.")
     if stopping_rule not in {"n_bkps", "penalty"}:
         raise ValueError("stopping_rule must be either 'n_bkps' or 'penalty'.")
-    if stopping_rule == "penalty" and penalty is None:
-        raise ValueError("penalty must be provided when stopping_rule='penalty'.")
+    if stopping_rule == "penalty":
+        if penalties is None:
+            if penalty is None:
+                raise ValueError(
+                    "penalties or penalty must be provided when stopping_rule='penalty'."
+                )
+            penalties = [penalty]
+        penalties = np.asarray(penalties, dtype=float)
+        if penalties.size == 0:
+            raise ValueError("penalties must contain at least one value.")
+        if np.any(penalties <= 0):
+            raise ValueError("All penalties must be strictly positive.")
+    else:
+        penalties = None
 
     t0 = time.time()
     t_signal_phase_start = time.time()
@@ -346,38 +361,78 @@ def grid_search_frobenius_distance(
     signal_generation_phase_seconds = time.time() - t_signal_phase_start
 
     t_detection_phase_start = time.time()
-    evaluation = evaluate_precomputed_window_signals(
-        samples=samples,
-        window_lengths=window_lengths,
-        margin=margin,
-        signals_by_window=signals_by_window,
-        kernel=kernel,
-        stopping_rule=stopping_rule,
-        penalty=penalty,
-    )
+    if penalties is None:
+        evaluation = evaluate_precomputed_window_signals(
+            samples=samples,
+            window_lengths=window_lengths,
+            margin=margin,
+            signals_by_window=signals_by_window,
+            kernel=kernel,
+            stopping_rule=stopping_rule,
+            penalty=None,
+        )
+        penalty_results = [evaluation]
+        results_by_penalty = {None: evaluation}
+        score_array = evaluation["score_array"]
+        hausdorff_array = np.array(
+            [
+                evaluation["mean_hausdorff_per_window_length"][int(window_length)]
+                for window_length in window_lengths
+            ],
+            dtype=float,
+        )
+    else:
+        evaluation = None
+        penalty_results = []
+        results_by_penalty = {}
+        score_array = np.empty((len(window_lengths), len(penalties)), dtype=float)
+        score_array[:] = np.nan
+        hausdorff_array = np.empty((len(window_lengths), len(penalties)), dtype=float)
+        hausdorff_array[:] = np.nan
+
+        for penalty_index, penalty_value in enumerate(penalties):
+            penalty_evaluation = evaluate_precomputed_window_signals(
+                samples=samples,
+                window_lengths=window_lengths,
+                margin=margin,
+                signals_by_window=signals_by_window,
+                kernel=kernel,
+                stopping_rule=stopping_rule,
+                penalty=float(penalty_value),
+            )
+            penalty_results.append(penalty_evaluation)
+            results_by_penalty[float(penalty_value)] = penalty_evaluation
+            score_array[:, penalty_index] = penalty_evaluation["score_array"]
+            hausdorff_array[:, penalty_index] = np.array(
+                [
+                    penalty_evaluation["mean_hausdorff_per_window_length"][
+                        int(window_length)
+                    ]
+                    for window_length in window_lengths
+                ],
+                dtype=float,
+            )
     detection_metrics_phase_seconds = time.time() - t_detection_phase_start
     elapsed = time.time() - t0
-
-    score_array = evaluation["score_array"]
-    hausdorff_array = np.array(
-        [
-            evaluation["mean_hausdorff_per_window_length"][int(window_length)]
-            for window_length in window_lengths
-        ],
-        dtype=float,
-    )
 
     if selection_metric == "f1":
         selection_array = score_array
         if np.all(np.isnan(selection_array)):
             best_index = None
             best_window_length = None
+            best_penalty = None
             best_score = math.nan
             best_f1 = math.nan
             best_hausdorff = math.nan
         else:
-            best_index = int(np.nanargmax(selection_array))
-            best_window_length = int(window_lengths[best_index])
+            best_index = np.unravel_index(
+                int(np.nanargmax(selection_array)),
+                selection_array.shape,
+            )
+            best_window_length = int(window_lengths[best_index[0]])
+            best_penalty = (
+                None if penalties is None else float(penalties[best_index[1]])
+            )
             best_score = float(selection_array[best_index])
             best_f1 = float(score_array[best_index])
             best_hausdorff = float(hausdorff_array[best_index])
@@ -386,6 +441,7 @@ def grid_search_frobenius_distance(
         if np.all(np.isnan(selection_array)):
             best_index = None
             best_window_length = None
+            best_penalty = None
             best_score = math.nan
             best_f1 = math.nan
             best_hausdorff = math.nan
@@ -394,26 +450,36 @@ def grid_search_frobenius_distance(
             if np.all(np.isinf(selection_array)):
                 best_index = None
                 best_window_length = None
+                best_penalty = None
                 best_score = math.nan
                 best_f1 = math.nan
                 best_hausdorff = math.nan
             else:
-                best_index = int(np.argmin(selection_array))
-                best_window_length = int(window_lengths[best_index])
+                best_index = np.unravel_index(
+                    int(np.argmin(selection_array)),
+                    selection_array.shape,
+                )
+                best_window_length = int(window_lengths[best_index[0]])
+                best_penalty = (
+                    None if penalties is None else float(penalties[best_index[1]])
+                )
                 best_score = float(hausdorff_array[best_index])
                 best_f1 = float(score_array[best_index])
                 best_hausdorff = float(hausdorff_array[best_index])
 
     summary = {
         "window_lengths": window_lengths,
+        "penalties": penalties,
         "margin": float(margin),
         "kernel": kernel,
         "stopping_rule": stopping_rule,
-        "penalty": None if penalty is None else float(penalty),
+        "penalty": best_penalty,
+        "best_penalty": best_penalty,
         "backend_requested": backend,
         "backend_used": backend_used,
         "num_samples": len(samples),
-        "num_parameter_pairs": len(window_lengths),
+        "num_penalty_jobs": 0 if penalties is None else len(penalties),
+        "num_parameter_pairs": len(window_lengths) * (1 if penalties is None else len(penalties)),
         "save_signals": save_signals,
         "signals_outdir": str(signals_outdir) if signals_outdir is not None else None,
         "selection_metric": selection_metric,
@@ -424,6 +490,8 @@ def grid_search_frobenius_distance(
         "signal_generation_phase_seconds": signal_generation_phase_seconds,
         "detection_metrics_phase_seconds": detection_metrics_phase_seconds,
         "window_results": evaluation,
+        "penalty_results": penalty_results,
+        "results_by_penalty": results_by_penalty,
         "best_index": best_index,
         "best_window_length": best_window_length,
         "best_window": best_window_length,
