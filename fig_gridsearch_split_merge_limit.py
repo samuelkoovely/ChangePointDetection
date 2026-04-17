@@ -360,19 +360,20 @@ def compute_window_limit_payload(network, window: float) -> dict:
     k_samples = np.flatnonzero(
         np.asarray(network.times, dtype=float) < network.times[-1] - float(window)
     ).astype(int)
-    t_samples = np.asarray(network.times[k_samples], dtype=float)
-    values = np.empty(len(t_samples), dtype=float)
+    start_times = np.asarray(network.times[k_samples], dtype=float)
+    t_samples = start_times + 0.5 * float(window)
+    values = np.empty(len(start_times), dtype=float)
 
-    for idx, start_time in enumerate(t_samples):
+    for idx, start_time in enumerate(start_times):
         values[idx] = compute_component_log_sum(
             network=network,
             start_time=float(start_time),
             window=float(window),
         )
-        if (idx + 1) % 250 == 0 or idx + 1 == len(t_samples):
+        if (idx + 1) % 250 == 0 or idx + 1 == len(start_times):
             print(
                 f"split_merge limit, window={window_key(window)}: "
-                f"{idx + 1}/{len(t_samples)} samples"
+                f"{idx + 1}/{len(start_times)} samples"
             )
 
     time_limit_array = (
