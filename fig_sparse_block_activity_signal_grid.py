@@ -14,6 +14,42 @@ from signal_generation import load_signal_result
 from sparse_block_activity_common import load_pickle
 
 
+def is_dataset_results_dir(path: Path) -> bool:
+    return (path / "metadata.pkl").exists() and (path / "signals").exists()
+
+
+def resolve_dataset_results_dir(requested_dir: Path) -> Path:
+    if is_dataset_results_dir(requested_dir):
+        return requested_dir
+
+    if not requested_dir.exists():
+        raise FileNotFoundError(
+            f"Results directory {requested_dir} does not exist."
+        )
+
+    child_candidates = sorted(
+        child
+        for child in requested_dir.iterdir()
+        if child.is_dir() and is_dataset_results_dir(child)
+    )
+
+    if len(child_candidates) == 1:
+        return child_candidates[0]
+
+    if len(child_candidates) > 1:
+        raise ValueError(
+            f"{requested_dir} is not a dataset-specific results directory. "
+            f"Found multiple dataset subdirectories: {[child.name for child in child_candidates]}. "
+            "Pass the specific child directory instead."
+        )
+
+    raise FileNotFoundError(
+        f"Missing metadata file {requested_dir / 'metadata.pkl'}. "
+        "Expected a dataset-specific signal-grid directory, or a parent directory "
+        "containing exactly one dataset subdirectory."
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -72,11 +108,6 @@ def parse_args() -> argparse.Namespace:
 
 def load_metadata(results_dir: Path) -> dict[str, Any]:
     metadata_path = results_dir / "metadata.pkl"
-    if not metadata_path.exists():
-        raise FileNotFoundError(
-            f"Missing metadata file {metadata_path}. "
-            "Expected a dataset-specific signal-grid directory."
-        )
     return load_pickle(metadata_path)
 
 
@@ -278,7 +309,7 @@ def plot_signal_grid(
 
 def main() -> None:
     args = parse_args()
-    results_dir = args.results_dir
+    results_dir = resolve_dataset_results_dir(args.results_dir)
     metadata = load_metadata(results_dir)
     reverse_time = bool(metadata.get("reverse_time", False))
     available_lambdas = np.asarray(metadata["lambdas"], dtype=float)

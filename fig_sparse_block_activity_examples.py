@@ -140,10 +140,35 @@ def resolve_results_dir(
     dataset_results: dict[str, Path],
     signal_grid_base: Path | None,
 ) -> Path:
+    def is_dataset_results_dir(path: Path) -> bool:
+        return (path / "metadata.pkl").exists() and (path / "signals").exists()
+
+    def resolve_candidate(path: Path) -> Path:
+        if is_dataset_results_dir(path):
+            return path
+
+        nested = path / spec_key
+        if is_dataset_results_dir(nested):
+            return nested
+
+        child_candidates = sorted(
+            child
+            for child in path.iterdir()
+            if child.is_dir() and is_dataset_results_dir(child)
+        ) if path.exists() else []
+        if len(child_candidates) == 1:
+            return child_candidates[0]
+
+        raise FileNotFoundError(
+            f"Could not resolve a dataset-specific results directory for {spec_key!r} "
+            f"from {path}. Expected metadata.pkl/signals either directly there or in "
+            f"a nested {spec_key}/ directory."
+        )
+
     if spec_key in dataset_results:
-        return dataset_results[spec_key]
+        return resolve_candidate(dataset_results[spec_key])
     if signal_grid_base is not None:
-        return signal_grid_base / spec_key
+        return resolve_candidate(signal_grid_base / spec_key)
     raise ValueError(
         f"No signal-grid directory configured for dataset {spec_key!r}. "
         "Pass --signal-grid-base or --dataset-results."
