@@ -195,18 +195,6 @@ def plot_signal_grid(
     t_max = float(net.times[-1])
     breakpoints = [float(value) for value in sample.get("bkps", [])]
 
-    signal_arrays = [
-        np.asarray(payload["signal"], dtype=float)
-        for payload in signals.values()
-        if len(np.asarray(payload["signal"], dtype=float)) > 0
-    ]
-    all_signal_values = (
-        np.concatenate(signal_arrays)
-        if len(signal_arrays) > 0
-        else np.array([], dtype=float)
-    )
-    y_limits = pad_limits(all_signal_values)
-
     n_rows = len(windows)
     n_cols = len(lambdas)
     fig_width = max(4.0, 2.8 * n_cols)
@@ -216,7 +204,7 @@ def plot_signal_grid(
         n_cols,
         figsize=(fig_width, fig_height),
         sharex=True,
-        sharey=True,
+        sharey=False,
         squeeze=False,
     )
 
@@ -246,7 +234,7 @@ def plot_signal_grid(
                 )
 
             axis.set_xlim(t_min, t_max)
-            axis.set_ylim(*y_limits)
+            axis.set_ylim(*pad_limits(values))
             axis.tick_params(labelsize=8)
             axis.text(
                 0.98,
