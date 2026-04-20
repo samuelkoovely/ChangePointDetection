@@ -14,6 +14,7 @@ from matplotlib.lines import Line2D
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 import EDLDE
+from signal_generation import load_signal_result
 from sparse_block_activity_common import (
     DEFAULT_DATA_DIR,
     DEFAULT_FIGURE_DIR,
@@ -50,6 +51,34 @@ def parse_args() -> argparse.Namespace:
         help="Directory where the output figures will be saved.",
     )
     parser.add_argument(
+        "--signal-grid-base",
+        type=Path,
+        default=None,
+        help=(
+            "Optional base directory containing per-dataset signal-grid results "
+            "folders named after the dataset keys."
+        ),
+    )
+    parser.add_argument(
+        "--dataset-results",
+        nargs="+",
+        default=None,
+        help=(
+            "Optional per-dataset signal-grid directories as "
+            "'dataset=/path/to/results_dir'."
+        ),
+    )
+    parser.add_argument(
+        "--selection",
+        nargs="+",
+        default=None,
+        help=(
+            "Optional per-dataset selection as 'dataset:lambda:window'. "
+            "When provided, the figure is built from the saved signal grid "
+            "instead of the single-bundle pickle."
+        ),
+    )
+    parser.add_argument(
         "--dpi",
         type=int,
         default=300,
@@ -61,6 +90,115 @@ def parse_args() -> argparse.Namespace:
         help="Display each figure after saving it.",
     )
     return parser.parse_args()
+
+
+def parse_dataset_results(entries: list[str] | None) -> dict[str, Path]:
+    if entries is None:
+        return {}
+
+    valid_keys = {spec.key for spec in SPECS}
+    parsed: dict[str, Path] = {}
+    for entry in entries:
+        if "=" not in entry:
+            raise ValueError(
+                f"Invalid --dataset-results entry {entry!r}. "
+                "Expected 'dataset=/path/to/results_dir'."
+            )
+        dataset, path_str = entry.split("=", 1)
+        if dataset not in valid_keys:
+            raise ValueError(
+                f"Unknown dataset {dataset!r}. Expected one of {sorted(valid_keys)}."
+            )
+        parsed[dataset] = Path(path_str)
+    return parsed
+
+
+def parse_selection_entries(entries: list[str] | None) -> dict[str, tuple[float, float]]:
+    if entries is None:
+        return {}
+
+    valid_keys = {spec.key for spec in SPECS}
+    parsed: dict[str, tuple[float, float]] = {}
+    for entry in entries:
+        parts = entry.split(":")
+        if len(parts) != 3:
+            raise ValueError(
+                f"Invalid --selection entry {entry!r}. "
+                "Expected 'dataset:lambda:window'."
+            )
+        dataset, lamda_str, window_str = parts
+        if dataset not in valid_keys:
+            raise ValueError(
+                f"Unknown dataset {dataset!r}. Expected one of {sorted(valid_keys)}."
+            )
+        parsed[dataset] = (float(lamda_str), float(window_str))
+    return parsed
+
+
+def resolve_results_dir(
+    spec_key: str,
+    dataset_results: dict[str, Path],
+    signal_grid_base: Path | None,
+) -> Path:
+    if spec_key in dataset_results:
+        return dataset_results[spec_key]
+    if signal_grid_base is not None:
+        return signal_grid_base / spec_key
+    raise ValueError(
+        f"No signal-grid directory configured for dataset {spec_key!r}. "
+        "Pass --signal-grid-base or --dataset-results."
+    )
+
+
+def load_sample_from_signal_grid(results_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    metadata_path = results_dir / "metadata.pkl"
+    if not metadata_path.exists():
+        raise FileNotFoundError(
+            f"Missing metadata file {metadata_path}. "
+            "Expected a dataset-specific signal-grid directory."
+        )
+
+    metadata = load_pickle(metadata_path)
+    sample_path_raw = metadata.get("sample_path")
+    if sample_path_raw is None:
+        raise KeyError(
+            f"metadata.pkl in {results_dir} does not contain 'sample_path'."
+        )
+
+    sample_input_path = Path(sample_path_raw)
+    if not sample_input_path.exists():
+        raise FileNotFoundError(
+            f"Sample pickle {sample_input_path} referenced by {metadata_path} "
+            "does not exist."
+        )
+    return load_pickle(sample_input_path), metadata
+
+
+def build_selected_signal_bundle(
+    results_dir: Path,
+    lamda: float,
+    window: float,
+) -> dict[str, Any]:
+    metadata_path = results_dir / "metadata.pkl"
+    if not metadata_path.exists():
+        raise FileNotFoundError(
+            f"Missing metadata file {metadata_path}. "
+            "Expected a dataset-specific signal-grid directory."
+        )
+
+    metadata = load_pickle(metadata_path)
+    reverse_time = bool(metadata.get("reverse_time", False))
+    signal_payload = load_signal_result(
+        outdir=results_dir / "signals",
+        lamda=float(lamda),
+        window=float(window),
+        reverse_time=reverse_time,
+    )
+    return {
+        "lamda": float(lamda),
+        "windows": np.asarray([float(window)], dtype=float),
+        "signals_by_window": {float(window): signal_payload},
+    }
 
 
 def compute_active_event_signal(sample: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
@@ -212,7 +350,6 @@ def plot_sample(
     inset_cmap = make_inset_cmap()
 
     active_times, active_counts = compute_active_event_signal(sample)
-    active_ylim = (0.0, max(1.0, 1.05 * float(np.max(active_counts))))
 
     fig, axes = plt.subplots(1, len(windows), figsize=(5.0 * len(windows), 4.6), sharex=True)
     if len(windows) == 1:
@@ -232,7 +369,6 @@ def plot_sample(
             linewidth=1.4,
         )
         axis.set_xlim(t_min, t_max)
-        axis.set_ylim(*active_ylim)
         axis.set_xlabel("t [s]")
         axis.tick_params(axis="y", labelcolor="tab:red")
         axis.axvline(
@@ -251,7 +387,6 @@ def plot_sample(
             linewidth=1.4,
             alpha=0.95,
         )
-        entropy_axis.set_ylim(*pad_limits(entropy_values))
         entropy_axis.tick_params(axis="y", labelcolor="tab:blue")
         twin_axes.append(entropy_axis)
 
@@ -300,23 +435,39 @@ def plot_sample(
 
 def main() -> None:
     args = parse_args()
+    dataset_results = parse_dataset_results(args.dataset_results)
+    selections = parse_selection_entries(args.selection)
 
     for spec in get_specs(args.datasets):
-        sample_input_path = sample_path(spec, args.data_dir)
-        signal_input_path = signal_path(spec, args.data_dir)
-
-        if not sample_input_path.exists():
-            raise FileNotFoundError(
-                f"Missing sparse sample {sample_input_path}. Run generate_sparse_block_activity_examples.py first."
-            )
-        if not signal_input_path.exists():
-            raise FileNotFoundError(
-                f"Missing sparse signal bundle {signal_input_path}. Run compute_sparse_block_activity_signals.py first."
-            )
-
         print(f"Plotting sparse {spec.key} figure")
-        sample = load_pickle(sample_input_path)
-        signal_bundle = load_pickle(signal_input_path)
+        if spec.key in selections:
+            lamda, window = selections[spec.key]
+            results_dir = resolve_results_dir(
+                spec_key=spec.key,
+                dataset_results=dataset_results,
+                signal_grid_base=args.signal_grid_base,
+            )
+            sample, _ = load_sample_from_signal_grid(results_dir)
+            signal_bundle = build_selected_signal_bundle(
+                results_dir=results_dir,
+                lamda=lamda,
+                window=window,
+            )
+        else:
+            sample_input_path = sample_path(spec, args.data_dir)
+            signal_input_path = signal_path(spec, args.data_dir)
+
+            if not sample_input_path.exists():
+                raise FileNotFoundError(
+                    f"Missing sparse sample {sample_input_path}. Run generate_sparse_block_activity_examples.py first."
+                )
+            if not signal_input_path.exists():
+                raise FileNotFoundError(
+                    f"Missing sparse signal bundle {signal_input_path}. Run compute_sparse_block_activity_signals.py first."
+                )
+
+            sample = load_pickle(sample_input_path)
+            signal_bundle = load_pickle(signal_input_path)
         output_path = plot_sample(
             spec=spec,
             sample=sample,
