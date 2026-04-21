@@ -91,15 +91,23 @@ def detect_change_points_from_signal(
     if signal.shape[0] == 0:
         return []
 
-    algo = rpt.KernelCPD(kernel=kernel).fit(signal)
-    breakpoint_indices = np.asarray(algo.predict(n_bkps=n_bkps), dtype=int)
+    if n_bkps <= 0 or signal.shape[0] <= n_bkps:
+        return []
+
+    try:
+        algo = rpt.KernelCPD(kernel=kernel).fit(signal)
+        breakpoint_indices = np.asarray(algo.predict(n_bkps=n_bkps), dtype=int)
+    except Exception:
+        return []
 
     if breakpoint_indices.size == 0:
         return []
 
     # ruptures typically includes the terminal endpoint n_samples, which is not
     # a change point. Remove it before converting indices to times.
-    breakpoint_indices = breakpoint_indices[breakpoint_indices < len(selected_times)]
+    breakpoint_indices = breakpoint_indices[
+        (breakpoint_indices >= 0) & (breakpoint_indices < len(selected_times))
+    ]
 
     if breakpoint_indices.size == 0:
         return []

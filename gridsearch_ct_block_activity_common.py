@@ -10,7 +10,7 @@ from typing import Any, Sequence
 import numpy as np
 
 from gridsearch_score import CPSample, extract_true_change_points, grid_search
-from signal_generation import SUPPORTED_WINDOW_BACKENDS
+from signal_generation import SUPPORTED_WINDOW_BACKENDS, get_sampled_window_indices_and_times
 from sparse_block_activity_common import DEFAULT_ENTROPY_WINDOWS, load_pickle, normalize_windows
 
 
@@ -171,6 +171,63 @@ def build_training_samples(dataset: Sequence[dict[str, Any]]) -> list[CPSample]:
     return training_samples
 
 
+def warn_if_sampling_too_sparse(
+    dataset: Sequence[dict[str, Any]],
+    *,
+    windows: Sequence[float],
+    sample_fraction: float,
+) -> None:
+    max_n_bkps = max(int(entry.get("n_bkps", 1)) for entry in dataset)
+    required_points = max_n_bkps + 1
+    warnings: list[str] = []
+
+    for window in normalize_windows(windows):
+        sampled_counts = [
+            len(
+                get_sampled_window_indices_and_times(
+                    entry["tnet"],
+                    window=float(window),
+                    sample_fraction=float(sample_fraction),
+                )[0]
+            )
+            for entry in dataset
+        ]
+        min_sampled_count = min(sampled_counts)
+        if min_sampled_count > max_n_bkps:
+            continue
+
+        full_scan_counts = [
+            len(
+                get_sampled_window_indices_and_times(
+                    entry["tnet"],
+                    window=float(window),
+                    sample_fraction=1.0,
+                )[0]
+            )
+            for entry in dataset
+        ]
+        min_full_scan_count = min(full_scan_counts)
+        if min_full_scan_count <= max_n_bkps:
+            warnings.append(
+                f"window={float(window):g}: even a full scan only yields "
+                f"{min_full_scan_count} valid centers."
+            )
+            continue
+
+        suggested_fraction = required_points / float(min_full_scan_count)
+        warnings.append(
+            f"window={float(window):g}: sample_fraction={float(sample_fraction):g} "
+            f"yields as few as {min_sampled_count} sampled centers; "
+            f"increase to at least {suggested_fraction:.3g} to make "
+            f"{max_n_bkps} breakpoint(s) feasible."
+        )
+
+    if warnings:
+        print("Warning: sparse sampling may be too aggressive for change-point detection.")
+        for warning in warnings:
+            print("  -", warning)
+
+
 def augment_and_save_summary(
     summary: dict[str, Any],
     *,
@@ -232,6 +289,11 @@ def main(spec: CTGridSearchSpec) -> None:
     args = parse_args(spec)
     dataset = load_dataset(args.data_path)
     training_samples = build_training_samples(dataset)
+    warn_if_sampling_too_sparse(
+        dataset,
+        windows=args.windows,
+        sample_fraction=float(args.sample_fraction),
+    )
     signals_dir = None
     if args.save_signals:
         signals_dir = args.signals_dir or (args.output_dir / "signals")
