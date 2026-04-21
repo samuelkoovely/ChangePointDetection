@@ -87,15 +87,15 @@ def normalize_windows(windows: list[float] | tuple[float, ...]) -> list[float]:
 
 
 def generate_block1_sparse_sample() -> dict[str, Any]:
-    density = 20
+    density = 30
     inter_tau = 5
     t_start = 0
     t_end = 100
     t_split = 50
-    n_per_group = 25
+    n_per_group = 50
     n_groups = 4
     basis_num_communities = 2
-    powers_num_communities = [2, 0]
+    powers_num_communities = [1, 0]
     list_p_within_community = [49 / 50, 49 / 50]
 
     number_of_events, starting_times, ending_times = EDLDE.EDLDE(
@@ -181,14 +181,14 @@ def generate_piecewise_sparse_activity(
 
 
 def generate_block2_sparse_sample() -> dict[str, Any]:
-    density_1 = 15
-    density_2 = 20
+    density_1 = 20
+    density_2 = 40
     inter_tau_1 = 5
     inter_tau_2 = 5
     t_start = 0
     t_end = 100
     t_split = 50
-    n_per_group = 100
+    n_per_group = 200
     n_groups = 1
     basis_num_communities = 2
     powers_num_communities = [0]
