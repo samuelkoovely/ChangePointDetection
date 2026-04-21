@@ -160,7 +160,7 @@ def lambda_blocks(lambdas: Sequence[float], n_jobs: int) -> list[list[float]]:
     return [block.tolist() for block in blocks if len(block) > 0]
 
 
-def save_window_signal_legacy(
+def save_window_signal_payload(
     signal_result: dict[str, Any],
     output_base: Path,
 ) -> None:
@@ -200,7 +200,7 @@ def save_lambda_block_results(
     for window_results in signals_by_lambda.values():
         for signal_result in window_results.values():
             save_signal_result(signal_result, signal_dir)
-            save_window_signal_legacy(signal_result, motif_output_dir)
+            save_window_signal_payload(signal_result, motif_output_dir)
 
 
 def save_metadata(
