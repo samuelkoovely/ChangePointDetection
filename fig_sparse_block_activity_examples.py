@@ -73,9 +73,21 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         default=None,
         help=(
-            "Optional per-dataset selection as 'dataset:lambda:window'. "
+            "Optional per-dataset selection as 'dataset:lambda' or "
+            "'dataset:lambda:window'. "
             "When provided, the figure is built from the saved signal grid "
             "instead of the single-bundle pickle."
+        ),
+    )
+    parser.add_argument(
+        "--selected-windows",
+        nargs="+",
+        type=float,
+        default=None,
+        help=(
+            "Optional window list to use together with 'dataset:lambda' "
+            "selection entries. If omitted, all windows available in the "
+            "signal-grid metadata are loaded for that lambda."
         ),
     )
     parser.add_argument(
@@ -113,25 +125,26 @@ def parse_dataset_results(entries: list[str] | None) -> dict[str, Path]:
     return parsed
 
 
-def parse_selection_entries(entries: list[str] | None) -> dict[str, tuple[float, float]]:
+def parse_selection_entries(entries: list[str] | None) -> dict[str, tuple[float, float | None]]:
     if entries is None:
         return {}
 
     valid_keys = {spec.key for spec in SPECS}
-    parsed: dict[str, tuple[float, float]] = {}
+    parsed: dict[str, tuple[float, float | None]] = {}
     for entry in entries:
         parts = entry.split(":")
-        if len(parts) != 3:
+        if len(parts) not in {2, 3}:
             raise ValueError(
                 f"Invalid --selection entry {entry!r}. "
-                "Expected 'dataset:lambda:window'."
+                "Expected 'dataset:lambda' or 'dataset:lambda:window'."
             )
-        dataset, lamda_str, window_str = parts
+        dataset, lamda_str = parts[:2]
         if dataset not in valid_keys:
             raise ValueError(
                 f"Unknown dataset {dataset!r}. Expected one of {sorted(valid_keys)}."
             )
-        parsed[dataset] = (float(lamda_str), float(window_str))
+        window = float(parts[2]) if len(parts) == 3 else None
+        parsed[dataset] = (float(lamda_str), window)
     return parsed
 
 
@@ -202,7 +215,7 @@ def load_sample_from_signal_grid(results_dir: Path) -> tuple[dict[str, Any], dic
 def build_selected_signal_bundle(
     results_dir: Path,
     lamda: float,
-    window: float,
+    windows: list[float] | None = None,
 ) -> dict[str, Any]:
     metadata_path = results_dir / "metadata.pkl"
     if not metadata_path.exists():
@@ -213,16 +226,37 @@ def build_selected_signal_bundle(
 
     metadata = load_pickle(metadata_path)
     reverse_time = bool(metadata.get("reverse_time", False))
-    signal_payload = load_signal_result(
-        outdir=results_dir / "signals",
-        lamda=float(lamda),
-        window=float(window),
-        reverse_time=reverse_time,
-    )
+    available_windows = np.asarray(metadata["windows"], dtype=float)
+
+    if windows is None:
+        requested_windows = [float(window) for window in available_windows]
+    else:
+        requested_windows = []
+        for window in windows:
+            matches = np.flatnonzero(
+                np.isclose(available_windows, float(window), rtol=1e-12, atol=1e-15)
+            )
+            if len(matches) == 0:
+                raise ValueError(
+                    f"Requested window={float(window):g} is not available in {results_dir}. "
+                    f"Available windows: {[float(value) for value in available_windows]}"
+                )
+            resolved_window = float(available_windows[int(matches[0])])
+            if resolved_window not in requested_windows:
+                requested_windows.append(resolved_window)
+
+    signals_by_window = {}
+    for window in requested_windows:
+        signals_by_window[float(window)] = load_signal_result(
+            outdir=results_dir / "signals",
+            lamda=float(lamda),
+            window=float(window),
+            reverse_time=reverse_time,
+        )
     return {
         "lamda": float(lamda),
-        "windows": np.asarray([float(window)], dtype=float),
-        "signals_by_window": {float(window): signal_payload},
+        "windows": np.asarray(requested_windows, dtype=float),
+        "signals_by_window": signals_by_window,
     }
 
 
@@ -473,10 +507,19 @@ def main() -> None:
                 signal_grid_base=args.signal_grid_base,
             )
             sample, _ = load_sample_from_signal_grid(results_dir)
+            selected_windows = (
+                [float(window)]
+                if window is not None
+                else (
+                    [float(value) for value in args.selected_windows]
+                    if args.selected_windows is not None
+                    else None
+                )
+            )
             signal_bundle = build_selected_signal_bundle(
                 results_dir=results_dir,
                 lamda=lamda,
-                window=window,
+                windows=selected_windows,
             )
         else:
             sample_input_path = sample_path(spec, args.data_dir)
