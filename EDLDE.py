@@ -251,8 +251,13 @@ def trim_temporal_network_head_tail(
     This is useful when the early/late parts of a synthetic time series contain
     transient effects that you want to discard.
 
-    The kept events are those whose *starting time* satisfies:
-        head <= starting_times < tail_start_time
+    The kept events are those whose lifetimes overlap the kept window
+    ``[head, tail_start_time)``:
+        ending_times > head and starting_times < tail_start_time
+
+    Events already active at ``head`` are preserved by clipping their starting
+    time to ``head``. By default, events extending past ``tail_start_time`` are
+    also clipped on the right.
 
     where the default head cutoff is computed from the exact formula
     with λ = density and μ = 1 / inter_tau:
@@ -261,9 +266,9 @@ def trim_temporal_network_head_tail(
             / (2 * density * inter_tau)
         )
 
-    After filtering, times are translated so that the first kept event starts at 0.
-    By default we shift by the *first kept starting time* (which can be > head if
-    the network is sparse), i.e.
+    After filtering and clipping, times are translated so that the first kept
+    event starts at 0. By default we shift by the *first kept starting time*
+    (which can be > head if no event overlaps the head cutoff), i.e.
         t0 = min(starting_times of kept events)
         starting_times <- starting_times - t0
         ending_times   <- ending_times   - t0
@@ -279,8 +284,9 @@ def trim_temporal_network_head_tail(
     inter_tau : float
         Mean event duration parameter.
     tail_start_time : float
-        Absolute time at which the tail begins (events with start times >= this
-        are removed).
+        Absolute time at which the tail begins. Events with starting times
+        before this instant can be kept, but events extending past it are
+        clipped on the right when `clip_ending_times=True`.
     head_start_time : float, optional
         If provided, overrides the default head formula.
     clip_ending_times : bool
@@ -330,7 +336,7 @@ def trim_temporal_network_head_tail(
         merge_overlapping_events = bool(getattr(temporal_net, "_overlapping_events_merged", False))
 
     et = temporal_net.events_table
-    mask = (et["starting_times"] >= head) & (et["starting_times"] < tail_start_time)
+    mask = (et["ending_times"] > head) & (et["starting_times"] < tail_start_time)
     trimmed = et.loc[mask].copy()
 
     if trimmed.shape[0] == 0:
@@ -338,6 +344,8 @@ def trim_temporal_network_head_tail(
             "No events remain after trimming. "
             "Check head/tail cutoffs or the time span of the input network."
         )
+
+    trimmed["starting_times"] = np.maximum(trimmed["starting_times"].to_numpy(), head)
 
     if clip_ending_times:
         trimmed["ending_times"] = np.minimum(trimmed["ending_times"].to_numpy(), tail_start_time)
