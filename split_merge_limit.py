@@ -169,14 +169,14 @@ def prepare_full_window_scan(
     windows: Sequence[float],
 ) -> dict[float, WindowLimitPlan]:
     """
-    Enumerate every valid window start for each requested window length.
+    Enumerate every valid window center for each requested window length.
     """
 
     window_plans: dict[float, WindowLimitPlan] = {}
 
     for window in tuple(float(window) for window in windows):
         k_samples = np.flatnonzero(net.times < net.times[-1] - window).astype(int)
-        t_samples = np.asarray(net.times[k_samples], dtype=float)
+        t_samples = np.asarray(net.times[k_samples], dtype=float) + 0.5 * window
         window_plans[window] = WindowLimitPlan(
             window=window,
             k_samples=k_samples,
@@ -216,12 +216,14 @@ def compute_window_limit_curve(
     plan: WindowLimitPlan,
 ) -> dict[str, Any]:
     """
-    Compute the connected-component limit statistic for all starts of one window.
+    Compute the connected-component limit statistic for all windows of one
+    length, exporting each value at the nominal window center.
     """
 
     values = np.empty(len(plan.t_samples), dtype=float)
+    start_times = np.asarray(plan.t_samples, dtype=float) - 0.5 * float(plan.window)
 
-    for idx, start_time in enumerate(plan.t_samples):
+    for idx, start_time in enumerate(start_times):
         values[idx] = compute_component_log_sum(
             net=net,
             start_time=float(start_time),

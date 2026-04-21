@@ -99,7 +99,7 @@ def prepare_full_window_sample(
     Prepare a full-scan sample context for the selected windows.
 
     Unlike the generic helper in `signal_generation.py`, this computes all valid
-    window start indices exactly instead of sampling them.
+    window-center positions exactly instead of sampling them.
     """
     windows = tuple(float(window) for window in windows_seconds)
     p0 = np.ones(net.num_nodes, dtype=float) / net.num_nodes

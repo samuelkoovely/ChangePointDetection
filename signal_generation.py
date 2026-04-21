@@ -21,9 +21,16 @@ class WindowSamplingPlan:
     """
     Precomputed sampling/query information for one window length on one sample.
 
-    `k_samples` and `t_samples` always refer to the sampled anchor points on the
-    original time grid. For forward signals the anchor is the window start;
-    for backward signals it is the window end.
+    `k_samples` stores the sampled window-center indices on the original time
+    grid.
+
+    `t_samples` stores those shared center times directly, so forward and
+    backward local signals can be evaluated on the exact same time grid.
+
+    `query_lefts` and `query_rights` store inclusive interval bounds on the
+    original inter-transition matrix list. Forward and backward signals share
+    the same bounds; the backward direction only changes the multiplication
+    order inside that interval.
     """
     window: float
     k_samples: np.ndarray
@@ -135,21 +142,24 @@ def get_sampled_window_indices_and_times(
     reverse_time: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Select valid window anchor indices by sampling approximately a fixed
-    fraction of window positions uniformly in time.
+    Select valid window-center indices by sampling approximately a fixed
+    fraction of center positions uniformly in time.
 
     Returns
     -------
     k_samples:
-        Integer indices of sampled window anchors.
+        Integer indices of sampled window centers on the original time grid.
     t_samples:
-        Times corresponding to the sampled window anchors.
+        Times corresponding to the sampled window centers.
     """
     times_arr = np.asarray(net.times, dtype=np.float64)
-    if reverse_time:
-        candidate_indices = np.flatnonzero(times_arr > times_arr[0] + float(window))
-    else:
-        candidate_indices = np.flatnonzero(times_arr < times_arr[-1] - float(window))
+    del reverse_time  # Sampling is defined on shared center positions.
+
+    half_window = 0.5 * float(window)
+    candidate_indices = np.flatnonzero(
+        (times_arr >= times_arr[0] + half_window)
+        & (times_arr <= times_arr[-1] - half_window)
+    )
 
     M = len(candidate_indices)
 
@@ -167,6 +177,36 @@ def get_sampled_window_indices_and_times(
     k_samples = candidate_indices[sample_positions].astype(int)
     t_samples = times_arr[k_samples].astype(float)
     return k_samples, t_samples
+
+
+def _get_window_bounds_from_center_times(
+    net: Any,
+    center_times: np.ndarray,
+    window: float,
+    *,
+    clip_to_grid: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return inclusive matrix-index bounds for windows centered at `center_times`.
+    """
+    center_times = np.asarray(center_times, dtype=np.float64)
+    if len(center_times) == 0:
+        empty = np.array([], dtype=np.int64)
+        return empty, empty
+
+    times_arr = np.asarray(net.times, dtype=np.float64)
+    half_window = 0.5 * float(window)
+    start_targets = center_times - half_window
+    end_targets = center_times + half_window
+
+    query_lefts = np.searchsorted(times_arr, start_targets, side="left")
+    query_rights = np.searchsorted(times_arr, end_targets, side="right") - 1
+
+    if clip_to_grid:
+        np.clip(query_lefts, 0, len(times_arr) - 1, out=query_lefts)
+        np.clip(query_rights, 0, len(times_arr) - 1, out=query_rights)
+
+    return query_lefts.astype(np.int64), query_rights.astype(np.int64)
 
 
 def _normalize_windows(windows: Sequence[float]) -> tuple[float, ...]:
@@ -248,10 +288,13 @@ def build_window_sampling_plan(
     Build the sampling/query plan for one window length.
     """
     times_arr = np.asarray(net.times, dtype=np.float64)
-    if reverse_time:
-        candidate_indices = np.flatnonzero(times_arr > times_arr[0] + float(window))
-    else:
-        candidate_indices = np.flatnonzero(times_arr < times_arr[-1] - float(window))
+    del reverse_time  # The plan is shared across forward and backward signals.
+
+    half_window = 0.5 * float(window)
+    candidate_indices = np.flatnonzero(
+        (times_arr >= times_arr[0] + half_window)
+        & (times_arr <= times_arr[-1] - half_window)
+    )
 
     if len(candidate_indices) == 0:
         return WindowSamplingPlan(
@@ -270,23 +313,13 @@ def build_window_sampling_plan(
             net=net,
             window=window,
             sample_fraction=sample_fraction,
-            reverse_time=reverse_time,
         )
 
-    if reverse_time:
-        query_lefts = _get_backward_window_starts_vectorized(
-            net=net,
-            anchor_indices=k_samples,
-            window=window,
-        )
-        query_rights = np.asarray(k_samples, dtype=np.int64) - 1
-    else:
-        query_lefts = np.asarray(k_samples, dtype=np.int64)
-        query_rights = _get_window_ends_vectorized(
-            net=net,
-            anchor_indices=k_samples,
-            window=window,
-        )
+    query_lefts, query_rights = _get_window_bounds_from_center_times(
+        net=net,
+        center_times=t_samples,
+        window=window,
+    )
 
     return WindowSamplingPlan(
         window=float(window),
