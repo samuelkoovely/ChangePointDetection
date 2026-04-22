@@ -21,6 +21,9 @@ DEFAULT_CT_RANDOM_SEED = 34
 DEFAULT_CT_TEST_NUM_SAMPLES = 50
 DEFAULT_CT_TEST_RANDOM_SEED = 1034
 DEFAULT_CT_TEST_SAMPLE_INDEX_OFFSET = 1000
+DEFAULT_CT_T_START = 0
+DEFAULT_CT_T_END = 200
+DEFAULT_CT_EXAMPLE_T_SPLIT = 100
 
 DEFAULT_BREAKPOINT_FRACTION_LOWER = 0.25
 DEFAULT_BREAKPOINT_FRACTION_UPPER = 0.75
@@ -138,8 +141,8 @@ def block1_sparse_ct_parameters() -> dict[str, Any]:
         "model": "block1_sparse",
         "density": 30,
         "inter_tau": 5,
-        "t_start": 0,
-        "t_end": 100,
+        "t_start": DEFAULT_CT_T_START,
+        "t_end": DEFAULT_CT_T_END,
         "n_per_group": 50,
         "n_groups": 4,
         "basis_num_communities": 2,
@@ -155,8 +158,8 @@ def block2_sparse_ct_parameters() -> dict[str, Any]:
         "density_2": 40,
         "inter_tau_1": 5,
         "inter_tau_2": 5,
-        "t_start": 0,
-        "t_end": 100,
+        "t_start": DEFAULT_CT_T_START,
+        "t_end": DEFAULT_CT_T_END,
         "n_per_group": 200,
         "n_groups": 1,
         "basis_num_communities": 2,
@@ -210,7 +213,10 @@ def generate_block1_sparse_ct_sample(
 
 
 def generate_block1_sparse_sample() -> dict[str, Any]:
-    return generate_block1_sparse_ct_sample(sample_index=0, t_split=50)
+    return generate_block1_sparse_ct_sample(
+        sample_index=0,
+        t_split=DEFAULT_CT_EXAMPLE_T_SPLIT,
+    )
 
 
 def generate_piecewise_sparse_activity(
@@ -288,7 +294,10 @@ def generate_block2_sparse_ct_sample(
 
 
 def generate_block2_sparse_sample() -> dict[str, Any]:
-    return generate_block2_sparse_ct_sample(sample_index=0, t_split=50)
+    return generate_block2_sparse_ct_sample(
+        sample_index=0,
+        t_split=DEFAULT_CT_EXAMPLE_T_SPLIT,
+    )
 
 
 def generate_block1_sparse_ct_dataset(
