@@ -3,6 +3,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -90,6 +91,11 @@ if n_samples <= 0:
     raise ValueError('No samples available to plot.')
 fig, axes = plt.subplots(n_samples, 1, figsize=(14, max(2.2 * n_samples, 4)), sharex=False)
 axes = np.atleast_1d(axes)
+legend_handles = [
+    Line2D([0], [0], color='C0', linewidth=1.5, label='Signal'),
+    Line2D([0], [0], color='black', linewidth=1.5, label='Change point'),
+    Line2D([0], [0], color='red', linewidth=1.5, linestyle='dashed', label='Predicted change point'),
+]
 
 for sample in range(n_samples):
     entry = dataset[sample]
@@ -107,7 +113,7 @@ for sample in range(n_samples):
     x_values = np.asarray(signal.get('snapshot_indices', np.arange(len(signal_values))))
 
     ax = axes[sample]
-    ax.plot(x_values, signal_values, label=f'sample_{sample}')
+    ax.plot(x_values, signal_values, color='C0')
     if signal_values.size > 0:
         ymin = np.min(signal_values)
         ymax = np.max(signal_values)
@@ -129,12 +135,18 @@ for sample in range(n_samples):
                 linestyles='dashed',
                 color='red',
             )
-    ax.legend(loc='upper right')
     ax.set_ylabel(f's{sample}')
 
 axes[0].set_title(f'Frobenius distance, window_length={int(best_window_length)}')
 axes[-1].set_xlabel('time')
-fig.tight_layout()
+fig.legend(
+    handles=legend_handles,
+    loc='lower center',
+    bbox_to_anchor=(0.5, 0.01),
+    ncol=3,
+    frameon=False,
+)
+fig.tight_layout(rect=(0, 0.06, 1, 1))
 OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 fig.savefig(OUTPUT_PATH, format='pdf', dpi=300, bbox_inches='tight')
 print(OUTPUT_PATH)

@@ -10,6 +10,7 @@ os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "matplotlib"))
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -199,6 +200,18 @@ def plot_best_signals(
     fig_height = max(2.2 * n_samples, 4.0)
     fig, axes = plt.subplots(n_samples, 1, figsize=(14, fig_height), sharex=False)
     axes = np.atleast_1d(axes)
+    legend_handles = [
+        Line2D([0], [0], color="C0", linewidth=1.5, label="Signal"),
+        Line2D([0], [0], color="black", linewidth=1.5, label="Change point"),
+        Line2D(
+            [0],
+            [0],
+            color="red",
+            linewidth=1.5,
+            linestyle="dashed",
+            label="Predicted change point",
+        ),
+    ]
 
     for sample_idx in range(n_samples):
         entry = dataset[sample_idx]
@@ -220,7 +233,7 @@ def plot_best_signals(
         )
 
         ax = axes[sample_idx]
-        ax.plot(x_values, signal_values, label=sample_name)
+        ax.plot(x_values, signal_values, color="C0")
         if signal_values.size > 0:
             ymin = float(np.min(signal_values))
             ymax = float(np.max(signal_values))
@@ -253,14 +266,20 @@ def plot_best_signals(
                 va="center",
                 transform=ax.transAxes,
             )
-        ax.legend(loc="upper right")
         ax.set_ylabel(f"s{sample_idx}")
 
     if title is None:
         title = f"{results.get('dataset', results_path.parent.name)}\nlambda={best_lamda:.5g}, window={best_window:g}"
     axes[0].set_title(title)
     axes[-1].set_xlabel("time")
-    fig.tight_layout()
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+        ncol=3,
+        frameon=False,
+    )
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
 
     resolved_output_path = output_path
     if resolved_output_path is None and not show:
