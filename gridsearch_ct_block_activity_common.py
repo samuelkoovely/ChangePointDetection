@@ -15,7 +15,7 @@ from sparse_block_activity_common import DEFAULT_ENTROPY_WINDOWS, load_pickle, n
 
 
 DEFAULT_LAMBDAS = np.logspace(-5, 0, 10)
-DEFAULT_MARGIN = 5.0
+DEFAULT_MARGIN = 2.5
 DEFAULT_SELECTION_METRIC = "hausdorff"
 DEFAULT_KERNEL = "linear"
 DEFAULT_WINDOW_BACKEND = "segment_tree"
