@@ -28,6 +28,8 @@ class CTGridSearchSpec:
     dataset_path: Path
     output_dir: Path
     sample_fraction: float
+    default_lambdas: Sequence[float] = tuple(DEFAULT_LAMBDAS.tolist())
+    default_windows: Sequence[float] = tuple(DEFAULT_ENTROPY_WINDOWS)
 
 
 def parse_args(spec: CTGridSearchSpec) -> argparse.Namespace:
@@ -65,14 +67,14 @@ def parse_args(spec: CTGridSearchSpec) -> argparse.Namespace:
         "--lambdas",
         nargs="+",
         type=float,
-        default=DEFAULT_LAMBDAS.tolist(),
+        default=[float(value) for value in spec.default_lambdas],
         help="Lambda values to evaluate.",
     )
     parser.add_argument(
         "--windows",
         nargs="+",
         type=float,
-        default=DEFAULT_ENTROPY_WINDOWS,
+        default=[float(value) for value in spec.default_windows],
         help="Window lengths to evaluate.",
     )
     parser.add_argument(
