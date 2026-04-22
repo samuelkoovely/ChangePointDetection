@@ -11,7 +11,7 @@ def main() -> None:
         training_results_path=(
             "gridsearch_results/block2activities_snapshots_laplacians/gridsearch_results.pkl"
         ),
-        test_dataset_path="data/block2activities_snapshots_test.pkl",
+        test_dataset_path="data/block2activities_test_snapshots.pkl",
         outdir="gridsearch_results/block2activities_snapshots_laplacians",
     )
     print_test_summary(summary)

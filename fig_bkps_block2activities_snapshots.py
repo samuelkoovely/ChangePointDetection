@@ -17,7 +17,7 @@ lamda_full, window_full, predicted_change_points_full = get_best_signal_metadata
 
 fig, axes = plt.subplots(5, 1, figsize=(10, 10), sharex=False, squeeze=False)
 for sample in range(5):
-    with open('data/block2activities_snapshots.pkl', 'rb') as handle:
+    with open('data/block2activities_train_snapshots.pkl', 'rb') as handle:
         tnet = pickle.load(handle)[sample]
         bkps = [float(change_point) for change_point in tnet['bkps']]
 

@@ -81,7 +81,7 @@ sample_names = best_result.get('sample_names')
 if sample_names is None:
     sample_names = [f'sample_{i}' for i in range(len(predicted_change_points))]
 
-with open(BASE_DIR / 'data/block2activities_snapshots.pkl', 'rb') as handle:
+with open(BASE_DIR / 'data/block2activities_train_snapshots.pkl', 'rb') as handle:
     dataset = pickle.load(handle)
 
 n_samples = min(5, len(dataset), len(predicted_change_points))

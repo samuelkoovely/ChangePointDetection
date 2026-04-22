@@ -2,7 +2,7 @@ import numpy as np
 import pickle
 from gridsearch_score import CPSample, extract_true_change_points, grid_search
 
-with open("data/block2activities.pkl", "rb") as f:
+with open("data/block2activities_train.pkl", "rb") as f:
     dataset = pickle.load(f)
 
 lambdas = np.logspace(-5, 0, 10)

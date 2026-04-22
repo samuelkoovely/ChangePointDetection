@@ -9,8 +9,8 @@ import numpy as np
 import EDLDE
 
 
-TRAIN_NUM_SAMPLES = 5
-TEST_NUM_SAMPLES = 10
+TRAIN_NUM_SAMPLES = 10
+TEST_NUM_SAMPLES = 50
 
 TRAIN_RANDOM_SEED = 34
 TEST_RANDOM_SEED = 1034
@@ -37,7 +37,7 @@ PHASE_1_EVENT_SEED_BASE = 1415
 PHASE_2_EVENT_SEED_BASE = 8281
 SBM_SEED_BASE = 271
 
-TRAIN_OUTPUT_PATH = Path("data/block2activities.pkl")
+TRAIN_OUTPUT_PATH = Path("data/block2activities_train.pkl")
 TEST_OUTPUT_PATH = Path("data/block2activities_test.pkl")
 
 
@@ -122,16 +122,24 @@ def write_dataset(dataset: list[dict[str, object]], output_path: Path) -> None:
         pickle.dump(dataset, handle)
 
 
-def main() -> None:
-    training_dataset = generate_dataset(
+def generate_training_dataset() -> list[dict[str, object]]:
+    return generate_dataset(
         num_samples=TRAIN_NUM_SAMPLES,
         random_seed=TRAIN_RANDOM_SEED,
     )
-    test_dataset = generate_dataset(
+
+
+def generate_test_dataset() -> list[dict[str, object]]:
+    return generate_dataset(
         num_samples=TEST_NUM_SAMPLES,
         random_seed=TEST_RANDOM_SEED,
         sample_index_offset=TEST_SAMPLE_INDEX_OFFSET,
     )
+
+
+def main() -> None:
+    training_dataset = generate_training_dataset()
+    test_dataset = generate_test_dataset()
 
     write_dataset(training_dataset, TRAIN_OUTPUT_PATH)
     write_dataset(test_dataset, TEST_OUTPUT_PATH)

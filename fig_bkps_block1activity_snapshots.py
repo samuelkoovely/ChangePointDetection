@@ -13,7 +13,7 @@ window = windows[results['best_index'][1]]
 predicted_change_points = results['lambda_results'][results['best_index'][0]]['predicted_change_points'][window]
 fig, axes = plt.subplots(5, 1, figsize=(14, 8), sharex=False)
 for sample in range(5):
-    with open('data/block1activity_snapshots.pkl', 'rb') as handle:
+    with open('data/block1activity_train_snapshots.pkl', 'rb') as handle:
         tnet = pickle.load(handle)[sample]
         bkps = [float(change_point) for change_point in tnet['bkps']]
 

@@ -417,7 +417,7 @@ def grid_search_frobenius_distance(
 
 
 if __name__ == "__main__":
-    with open("data/block1activity_snapshots.pkl", "rb") as f:
+    with open("data/block1activity_train_snapshots.pkl", "rb") as f:
         dataset = pickle.load(f)
 
     first_net = dataset[0]["tnet"]

@@ -516,7 +516,7 @@ grid_search_f1 = grid_search
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    with open("data/block2activities.pkl", "rb") as f:
+    with open("data/block2activities_train.pkl", "rb") as f:
         dataset = pickle.load(f)
 
     lambdas = np.logspace(-5, 0, 10)
