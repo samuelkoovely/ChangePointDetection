@@ -6,11 +6,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import to_rgb
-from matplotlib.patches import Patch
 
 from fig_ct_experiments_train_test_boxplots import load_all_split_metric_arrays
 from fig_snapshot_experiments_boxplots import METHOD_COLORS, style_axes
-from fig_snapshot_experiments_train_test_boxplots import _compute_log_floor
 from fig_snapshot_experiments_train_test_split_violins import (
     _clip_violin_half,
     _compute_hausdorff_cap,
@@ -63,12 +61,11 @@ def _prepare_violin_values(
     values: np.ndarray,
     *,
     hausdorff_cap: float,
-    log_floor: float,
 ) -> np.ndarray:
     display_values = np.asarray(values, dtype=float).copy()
     display_values[np.isposinf(display_values)] = hausdorff_cap
-    display_values[np.isneginf(display_values)] = log_floor
-    display_values[display_values <= 0] = log_floor
+    display_values[np.isneginf(display_values)] = 0.0
+    display_values[display_values < 0] = 0.0
     display_values = display_values[~np.isnan(display_values)]
     if display_values.size == 0:
         raise ValueError("No finite values available to plot.")
@@ -85,12 +82,10 @@ def _draw_half_violin(
     facecolor: tuple[float, float, float] | str,
     edgecolor: str,
     hausdorff_cap: float,
-    log_floor: float,
 ) -> None:
     display_values = _prepare_violin_values(
         values,
         hausdorff_cap=hausdorff_cap,
-        log_floor=log_floor,
     )
     violin = ax.violinplot(
         [display_values],
@@ -158,12 +153,6 @@ def draw_grouped_split_violins(
             for experiment_name, splits in metrics_by_experiment.items()
         }
     )
-    log_floor = _compute_log_floor(
-        {
-            experiment_name: {"Entropy": splits}
-            for experiment_name, splits in metrics_by_experiment.items()
-        }
-    )
 
     for experiment_idx, experiment_name in enumerate(experiment_names):
         position = centers[experiment_idx]
@@ -180,12 +169,10 @@ def draw_grouped_split_violins(
                 _prepare_violin_values(
                     train_values,
                     hausdorff_cap=hausdorff_cap,
-                    log_floor=log_floor,
                 ),
                 _prepare_violin_values(
                     test_values,
                     hausdorff_cap=hausdorff_cap,
-                    log_floor=log_floor,
                 ),
             ]
         )
@@ -208,7 +195,6 @@ def draw_grouped_split_violins(
             facecolor=ENTROPY_COLOR,
             edgecolor=ENTROPY_COLOR,
             hausdorff_cap=hausdorff_cap,
-            log_floor=log_floor,
         )
         _draw_half_violin(
             ax,
@@ -219,15 +205,13 @@ def draw_grouped_split_violins(
             facecolor=_lighten_color(ENTROPY_COLOR),
             edgecolor=ENTROPY_COLOR,
             hausdorff_cap=hausdorff_cap,
-            log_floor=log_floor,
         )
 
-    ax.set_yscale("log")
     ax.set_xticks(centers)
     ax.set_xticklabels(experiment_names)
     ax.set_xlim(centers[0] - 0.95, centers[-1] + 0.95)
     ax.set_ylim(
-        bottom=log_floor / 1.15,
+        bottom=0.0,
         top=hausdorff_cap * 1.12 if has_infinite_values else None,
     )
     ax.tick_params(axis="x", labelsize=11)
@@ -239,27 +223,9 @@ def build_figure(
 ) -> plt.Figure:
     fig, ax = plt.subplots(1, 1, figsize=(7.4, 4.1))
     draw_grouped_split_violins(ax=ax, metrics_by_experiment=metrics_by_experiment)
-    ax.set_ylabel("Hausdorff distance (log scale)")
+    ax.set_ylabel("Hausdorff distance")
     ax.set_title("Train/test Hausdorff distributions across CT experiments")
-
-    legend_handles = [
-        Patch(facecolor=ENTROPY_COLOR, edgecolor=ENTROPY_COLOR, label="Entropy"),
-        Patch(facecolor="#707070", edgecolor="#505050", alpha=0.9, label="Train (left)"),
-        Patch(
-            facecolor=_lighten_color(ENTROPY_COLOR),
-            edgecolor="#505050",
-            alpha=0.9,
-            label="Test (right)",
-        ),
-    ]
-    fig.legend(
-        handles=legend_handles,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.02),
-        ncol=3,
-        frameon=False,
-    )
-    fig.tight_layout(rect=(0.02, 0.02, 0.98, 0.90))
+    fig.tight_layout()
     return fig
 
 
