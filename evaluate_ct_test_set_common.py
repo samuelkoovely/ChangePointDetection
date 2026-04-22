@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import argparse
+import os
 import pickle
 import time
 from pathlib import Path
 from typing import Any, Sequence
+
+from joblib import Parallel, delayed
 
 from gridsearch_score import (
     CPSample,
@@ -16,6 +20,9 @@ from gridsearch_score import (
 
 DEFAULT_RESULTS_FILENAME = "test_set_results.pkl"
 DEFAULT_TEST_SIGNALS_DIRNAME = "test_signals"
+DEFAULT_N_JOBS = 1
+DEFAULT_BACKEND = "loky"
+DEFAULT_VERBOSE = 0
 
 
 def _load_pickle(path: str | Path) -> Any:
@@ -101,6 +108,87 @@ def _build_per_sample_results(
     return per_sample_results
 
 
+def build_ct_test_evaluation_parser(
+    *,
+    default_training_results_path: str | Path,
+    default_test_dataset_path: str | Path,
+    default_outdir: str | Path,
+    description: str,
+) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument(
+        "--training-results-path",
+        type=Path,
+        default=Path(default_training_results_path),
+        help="Path to the training grid-search summary pickle.",
+    )
+    parser.add_argument(
+        "--test-dataset-path",
+        type=Path,
+        default=Path(default_test_dataset_path),
+        help="Path to the test dataset pickle.",
+    )
+    parser.add_argument(
+        "--outdir",
+        type=Path,
+        default=Path(default_outdir),
+        help="Directory where evaluation outputs will be written.",
+    )
+    parser.set_defaults(save_signals=True)
+    parser.add_argument(
+        "--no-save-signals",
+        dest="save_signals",
+        action="store_false",
+        help="Skip writing per-sample test-set signal pickles.",
+    )
+    parser.add_argument(
+        "--results-filename",
+        type=str,
+        default=DEFAULT_RESULTS_FILENAME,
+        help="Filename used for the saved evaluation summary pickle.",
+    )
+    parser.add_argument(
+        "--test-signals-dirname",
+        type=str,
+        default=DEFAULT_TEST_SIGNALS_DIRNAME,
+        help="Subdirectory name used for saved test-set signals.",
+    )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=DEFAULT_N_JOBS,
+        help=(
+            "Number of parallel workers across test samples during signal generation. "
+            "Use 1 to disable sample-level parallelism."
+        ),
+    )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default=DEFAULT_BACKEND,
+        help="Joblib backend used for sample-parallel signal generation.",
+    )
+    parser.add_argument(
+        "--verbose",
+        type=int,
+        default=DEFAULT_VERBOSE,
+        help="Joblib verbosity used during sample-parallel signal generation.",
+    )
+    parser.add_argument(
+        "--recommend-max-jobs",
+        action="store_true",
+        help=(
+            "Print a conservative default worker suggestion based on the current machine "
+            "and exit."
+        ),
+    )
+    return parser
+
+
+def recommended_parallel_jobs() -> int:
+    return min(5, os.cpu_count() or 1)
+
+
 def run_ct_entropy_test_evaluation(
     *,
     training_results_path: str | Path,
@@ -109,6 +197,9 @@ def run_ct_entropy_test_evaluation(
     save_signals: bool = True,
     results_filename: str = DEFAULT_RESULTS_FILENAME,
     test_signals_dirname: str = DEFAULT_TEST_SIGNALS_DIRNAME,
+    n_jobs: int = DEFAULT_N_JOBS,
+    backend: str = DEFAULT_BACKEND,
+    verbose: int = DEFAULT_VERBOSE,
 ) -> dict[str, Any]:
     training_results_path = Path(training_results_path)
     test_dataset_path = Path(test_dataset_path)
@@ -123,11 +214,18 @@ def run_ct_entropy_test_evaluation(
     best_window = float(_require_value(training_summary, "best_window"))
     windows = [best_window]
     lambdas = [best_lamda]
+    n_jobs = int(n_jobs)
+    if n_jobs <= 0:
+        raise ValueError("n_jobs must be a positive integer.")
 
     t0 = time.time()
     t_signal_phase_start = time.time()
-    sample_signal_results = [
-        compute_and_store_signals_for_sample(
+    sample_signal_results = Parallel(
+        n_jobs=n_jobs,
+        backend=str(backend),
+        verbose=int(verbose),
+    )(
+        delayed(compute_and_store_signals_for_sample)(
             sample=sample,
             sample_idx=sample_idx,
             lambdas=lambdas,
@@ -142,7 +240,7 @@ def run_ct_entropy_test_evaluation(
             reverse_time=False,
         )
         for sample_idx, sample in enumerate(samples)
-    ]
+    )
     lambda_signal_results = reorganize_sample_signal_results_by_lambda(
         sample_signal_results=sample_signal_results,
         samples=samples,
@@ -190,6 +288,9 @@ def run_ct_entropy_test_evaluation(
             "lin_t_s": int(training_summary.get("lin_t_s", 10)),
             "window_backend": training_summary.get("window_backend", "auto"),
         },
+        "signal_generation_parallel_axis": "sample",
+        "signal_generation_n_jobs": int(n_jobs),
+        "signal_generation_backend": str(backend),
         "train_best_score": float(training_summary["best_score"]),
         "train_best_f1": float(training_summary["best_f1"]),
         "train_best_hausdorff": float(training_summary["best_hausdorff"]),
@@ -211,6 +312,14 @@ def print_test_summary(summary: dict[str, Any]) -> None:
     print("Test dataset:", summary["test_dataset_path"])
     print("Saved test results:", summary["results_path"])
     print("Saved test signals:", summary["signals_outdir"])
+    print(
+        "Signal generation parallelism:",
+        {
+            "axis": summary.get("signal_generation_parallel_axis"),
+            "n_jobs": summary.get("signal_generation_n_jobs"),
+            "backend": summary.get("signal_generation_backend"),
+        },
+    )
     print("Selection metric on training set:", summary["selection_metric"])
     print("Selected training parameters:", summary["train_best_params"])
     print("Number of test samples:", summary["num_test_samples"])
