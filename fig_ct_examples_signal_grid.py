@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from signal_generation import load_signal_result
-from sparse_block_activity_common import load_pickle
+from ct_examples_common import load_pickle
 
 
 def is_dataset_results_dir(path: Path) -> bool:

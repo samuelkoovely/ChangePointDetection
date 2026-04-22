@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from sparse_block_activity_common import (
+from ct_examples_common import (
     DEFAULT_CT_NUM_SAMPLES,
     DEFAULT_CT_RANDOM_SEED,
     generate_block1_sparse_ct_dataset,

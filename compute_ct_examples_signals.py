@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from sparse_block_activity_common import (
+from ct_examples_common import (
     DEFAULT_DATA_DIR,
     DEFAULT_ENTROPY_WINDOWS,
     DEFAULT_LAMDA,
@@ -60,7 +60,7 @@ def main() -> None:
         input_path = sample_path(spec, args.data_dir)
         if not input_path.exists():
             raise FileNotFoundError(
-                f"Missing sparse sample {input_path}. Run generate_sparse_block_activity_examples.py first."
+                f"Missing sparse sample {input_path}. Run generate_ct_examples.py first."
             )
 
         print(

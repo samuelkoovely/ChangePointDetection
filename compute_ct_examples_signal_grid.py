@@ -18,7 +18,7 @@ from signal_generation import (
     prepare_signal_sample,
     save_signal_result,
 )
-from sparse_block_activity_common import (
+from ct_examples_common import (
     DEFAULT_DATA_DIR,
     DEFAULT_ENTROPY_WINDOWS,
     SPECS,
@@ -29,7 +29,7 @@ from sparse_block_activity_common import (
 
 
 DEFAULT_LAMBDAS = np.logspace(-5, 0, 10)
-DEFAULT_OUTPUT_BASE = Path("gridsearch_results/sparse_block_activity_examples")
+DEFAULT_OUTPUT_BASE = Path("gridsearch_results/ct_examples")
 WINDOW_BACKEND = "segment_tree"
 BACKEND = "loky"
 
@@ -277,7 +277,7 @@ def compute_signal_grid_for_dataset(
     if not sample_input_path.exists():
         raise FileNotFoundError(
             f"Missing sparse sample {sample_input_path}. "
-            "Run generate_sparse_block_activity_examples.py first."
+            "Run generate_ct_examples.py first."
         )
 
     sample = load_pickle(sample_input_path)

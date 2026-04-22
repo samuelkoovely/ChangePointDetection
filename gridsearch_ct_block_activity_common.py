@@ -11,7 +11,7 @@ import numpy as np
 
 from gridsearch_score import CPSample, extract_true_change_points, grid_search
 from signal_generation import SUPPORTED_WINDOW_BACKENDS, get_sampled_window_indices_and_times
-from sparse_block_activity_common import DEFAULT_ENTROPY_WINDOWS, load_pickle, normalize_windows
+from ct_examples_common import DEFAULT_ENTROPY_WINDOWS, load_pickle, normalize_windows
 
 
 DEFAULT_LAMBDAS = np.logspace(-5, 0, 10)

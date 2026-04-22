@@ -15,7 +15,7 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 import EDLDE
 from signal_generation import load_signal_result
-from sparse_block_activity_common import (
+from ct_examples_common import (
     DEFAULT_DATA_DIR,
     DEFAULT_FIGURE_DIR,
     SPECS,
@@ -527,11 +527,11 @@ def main() -> None:
 
             if not sample_input_path.exists():
                 raise FileNotFoundError(
-                    f"Missing sparse sample {sample_input_path}. Run generate_sparse_block_activity_examples.py first."
+                    f"Missing sparse sample {sample_input_path}. Run generate_ct_examples.py first."
                 )
             if not signal_input_path.exists():
                 raise FileNotFoundError(
-                    f"Missing sparse signal bundle {signal_input_path}. Run compute_sparse_block_activity_signals.py first."
+                    f"Missing sparse signal bundle {signal_input_path}. Run compute_ct_examples_signals.py first."
                 )
 
             sample = load_pickle(sample_input_path)

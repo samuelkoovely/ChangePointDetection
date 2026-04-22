@@ -14,7 +14,7 @@ from signal_generation import compute_signals_for_lambda
 
 DEFAULT_LAMDA = 1.0
 DEFAULT_ENTROPY_WINDOWS = [0.25, 2.0, 10.0]
-DEFAULT_DATA_DIR = Path("data/sparse_block_activity_examples")
+DEFAULT_DATA_DIR = Path("data/ct_examples")
 DEFAULT_FIGURE_DIR = Path("figures")
 DEFAULT_CT_NUM_SAMPLES = 10
 DEFAULT_CT_RANDOM_SEED = 34
