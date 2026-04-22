@@ -6,6 +6,7 @@ import numpy as np
 
 
 BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_PATH = BASE_DIR / 'figures' / f'{Path(__file__).stem}.pdf'
 
 
 def resolve_existing_path(path_str: str | Path, base_dir: Path) -> Path:
@@ -84,8 +85,10 @@ if sample_names is None:
 with open(BASE_DIR / 'data/block1activity_train_snapshots.pkl', 'rb') as handle:
     dataset = pickle.load(handle)
 
-n_samples = min(5, len(dataset), len(predicted_change_points))
-fig, axes = plt.subplots(n_samples, 1, figsize=(14, 8), sharex=False)
+n_samples = min(len(dataset), len(predicted_change_points))
+if n_samples <= 0:
+    raise ValueError('No samples available to plot.')
+fig, axes = plt.subplots(n_samples, 1, figsize=(14, max(2.2 * n_samples, 4)), sharex=False)
 axes = np.atleast_1d(axes)
 
 for sample in range(n_samples):
@@ -108,6 +111,10 @@ for sample in range(n_samples):
     if signal_values.size > 0:
         ymin = np.min(signal_values)
         ymax = np.max(signal_values)
+        if np.isclose(ymin, ymax):
+            pad = max(abs(float(ymin)) * 0.05, 1e-6)
+            ymin -= pad
+            ymax += pad
         for bkp in entry['bkps']:
             ax.vlines(
                 bkp,
@@ -128,4 +135,7 @@ for sample in range(n_samples):
 axes[0].set_title(f'Frobenius distance, window_length={int(best_window_length)}')
 axes[-1].set_xlabel('time')
 fig.tight_layout()
-plt.show()
+OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+fig.savefig(OUTPUT_PATH, format='pdf', dpi=300, bbox_inches='tight')
+print(OUTPUT_PATH)
+plt.close(fig)

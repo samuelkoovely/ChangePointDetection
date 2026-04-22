@@ -6,6 +6,7 @@ import numpy as np
 
 
 BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_PATH = BASE_DIR / 'figures' / f'{Path(__file__).stem}.pdf'
 RESULTS_PATH = (
     BASE_DIR
     / 'gridsearch_results/multibkps_block2activities_snapshots_laplacians/gridsearch_results.pkl'
@@ -140,8 +141,10 @@ with open(DATASET_PATH, 'rb') as handle:
 best_n_eigen, best_window_length, best_penalty, predicted_change_points, sample_names = get_best_signal_metadata(results)
 signals_outdir = get_signals_outdir(results)
 
-n_samples = min(5, len(dataset), len(predicted_change_points))
-fig, axes = plt.subplots(n_samples, 1, figsize=(14, 8), sharex=False)
+n_samples = min(len(dataset), len(predicted_change_points))
+if n_samples <= 0:
+    raise ValueError('No samples available to plot.')
+fig, axes = plt.subplots(n_samples, 1, figsize=(14, max(2.2 * n_samples, 4)), sharex=False)
 axes = np.atleast_1d(axes)
 
 for sample in range(n_samples):
@@ -166,7 +169,9 @@ for sample in range(n_samples):
         ymin = np.min(signal_values)
         ymax = np.max(signal_values)
         if np.isclose(ymin, ymax):
-            ymax = ymin + 1.0
+            pad = max(abs(float(ymin)) * 0.05, 1e-6)
+            ymin -= pad
+            ymax += pad
 
         for bkp in entry['bkps']:
             ax.vlines(
@@ -192,4 +197,7 @@ if best_penalty is not None:
 axes[0].set_title(title)
 axes[-1].set_xlabel('snapshot index')
 fig.tight_layout()
-plt.show()
+OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+fig.savefig(OUTPUT_PATH, format='pdf', dpi=300, bbox_inches='tight')
+print(OUTPUT_PATH)
+plt.close(fig)

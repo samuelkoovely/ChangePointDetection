@@ -145,8 +145,8 @@ def parse_args(default_results_path: Path, default_dataset_path: Path) -> argpar
     parser.add_argument(
         "--num-samples",
         type=int,
-        default=5,
-        help="Maximum number of samples to plot.",
+        default=None,
+        help="Maximum number of samples to plot. Defaults to all available samples.",
     )
     parser.add_argument(
         "--dpi",
@@ -170,7 +170,7 @@ def parse_args(default_results_path: Path, default_dataset_path: Path) -> argpar
 
 def default_output_path(results_path: Path) -> Path:
     stem = results_path.parent.name or results_path.stem
-    return results_path.parent / f"fig_bkps_{stem}.png"
+    return BASE_DIR / "figures" / f"fig_bkps_{stem}.pdf"
 
 
 def plot_best_signals(
@@ -189,10 +189,15 @@ def plot_best_signals(
     best_lamda, best_window, predicted_change_points, sample_names = get_best_signal_metadata(results)
     signals_outdir = get_signals_outdir(results, results_path)
 
-    n_samples = min(int(num_samples), len(dataset), len(predicted_change_points))
+    available_samples = min(len(dataset), len(predicted_change_points))
+    if num_samples is None or int(num_samples) <= 0:
+        n_samples = available_samples
+    else:
+        n_samples = min(int(num_samples), available_samples)
     if n_samples <= 0:
         raise ValueError("No samples available to plot.")
-    fig, axes = plt.subplots(n_samples, 1, figsize=(14, 2.2 * n_samples), sharex=False)
+    fig_height = max(2.2 * n_samples, 4.0)
+    fig, axes = plt.subplots(n_samples, 1, figsize=(14, fig_height), sharex=False)
     axes = np.atleast_1d(axes)
 
     for sample_idx in range(n_samples):

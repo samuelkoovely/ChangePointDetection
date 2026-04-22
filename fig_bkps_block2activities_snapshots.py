@@ -1,9 +1,17 @@
 import numpy as np
 import pickle
 import matplotlib.pyplot as plt
+from pathlib import Path
 
-with open('gridsearch_results/block2activities_snapshots/gridsearch_results.pkl', 'rb') as handle:
+
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_PATH = BASE_DIR / 'figures' / f'{Path(__file__).stem}.pdf'
+
+with open(BASE_DIR / 'gridsearch_results/block2activities_snapshots/gridsearch_results.pkl', 'rb') as handle:
     results_full = pickle.load(handle)
+
+with open(BASE_DIR / 'data/block2activities_train_snapshots.pkl', 'rb') as handle:
+    dataset = pickle.load(handle)
 
 def get_best_signal_metadata(results):
     lambdas = results['lambdas']
@@ -15,23 +23,34 @@ def get_best_signal_metadata(results):
 
 lamda_full, window_full, predicted_change_points_full = get_best_signal_metadata(results_full)
 
-fig, axes = plt.subplots(5, 1, figsize=(10, 10), sharex=False, squeeze=False)
-for sample in range(5):
-    with open('data/block2activities_train_snapshots.pkl', 'rb') as handle:
-        tnet = pickle.load(handle)[sample]
-        bkps = [float(change_point) for change_point in tnet['bkps']]
+n_samples = min(len(dataset), len(predicted_change_points_full))
+if n_samples <= 0:
+    raise ValueError('No samples available to plot.')
+fig, axes = plt.subplots(n_samples, 1, figsize=(14, max(2.2 * n_samples, 4)), sharex=False)
+axes = np.atleast_1d(axes)
+for sample in range(n_samples):
+    tnet = dataset[sample]
+    bkps = [float(change_point) for change_point in tnet['bkps']]
 
     with open(
-        f'gridsearch_results/block2activities_snapshots/signals/sample_{sample}/'
-        f'signal_lamda_{lamda_full:.11f}_window_{window_full:g}.pkl',
+        BASE_DIR
+        / 'gridsearch_results/block2activities_snapshots/signals'
+        / f'sample_{sample}'
+        / f'signal_lamda_{lamda_full:.11f}_window_{window_full:g}.pkl',
         'rb',
     ) as handle:
         signal_full = pickle.load(handle)
 
-    ax_full = axes[sample, 0]
-    ax_full.plot(signal_full['signal'], label=f'sample_{sample}')
-    ymin_full = np.min(signal_full['signal'])
-    ymax_full = np.max(signal_full['signal'])
+    ax_full = axes[sample]
+    signal_values = np.asarray(signal_full['signal'], dtype=float)
+    x_values = np.asarray(signal_full.get('snapshot_indices', signal_full.get('k_samples', np.arange(len(signal_values)))), dtype=float)
+    ax_full.plot(x_values, signal_values, label=f'sample_{sample}')
+    ymin_full = np.min(signal_values)
+    ymax_full = np.max(signal_values)
+    if np.isclose(ymin_full, ymax_full):
+        pad = max(abs(float(ymin_full)) * 0.05, 1e-6)
+        ymin_full -= pad
+        ymax_full += pad
     for bkp in bkps:
         ax_full.vlines(
             bkp,
@@ -50,10 +69,12 @@ for sample in range(5):
     ax_full.legend(loc='upper right')
     ax_full.set_ylabel(f's{sample}')
 
-axes[0, 0].set_title(
+axes[0].set_title(
     f'Original inter-T\nlambda={lamda_full:.5g}, window={window_full:g}'
 )
-axes[-1, 0].set_xlabel('time')
+axes[-1].set_xlabel('time')
 fig.tight_layout()
-#plt.savefig('/home/b/skoove/Desktop/ChangePointDetection/fig_bkps_block2activities_snapshots.pdf', format='pdf', dpi=300, bbox_inches='tight')
-plt.show()
+OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+fig.savefig(OUTPUT_PATH, format='pdf', dpi=300, bbox_inches='tight')
+print(OUTPUT_PATH)
+plt.close(fig)
