@@ -449,7 +449,7 @@ def plot_sample(
         entropy_axis.tick_params(axis="y", labelcolor="tab:blue")
         twin_axes.append(entropy_axis)
 
-        axis.set_title(f"window = {window:g}s", fontsize=11)
+        axis.set_title(rf"$\Delta = {window:g}s$", fontsize=11)
         draw_matrix_insets(
             host_ax=axis,
             matrices=interval_matrices,
@@ -458,7 +458,7 @@ def plot_sample(
             inset_cmap=inset_cmap,
         )
 
-    axes[0].set_ylabel("Active events", color="tab:red")
+    axes[0].set_ylabel("# Active Links", color="tab:red")
     twin_axes[-1].set_ylabel("Local entropy", color="tab:blue")
     fig.subplots_adjust(left=0.07, right=0.98, top=0.9, bottom=0.12, wspace=0.28)
 
