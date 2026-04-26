@@ -10,7 +10,6 @@ os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "matplotlib"))
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import colormaps
-from matplotlib.lines import Line2D
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 import EDLDE
@@ -25,6 +24,8 @@ from ct_examples_common import (
     sample_path,
     signal_path,
 )
+
+plt.style.use(Path(__file__).with_name("paper.mplstyle"))
 
 
 def parse_args() -> argparse.Namespace:
@@ -397,7 +398,6 @@ def plot_sample(
     t_max = float(net.times[-1])
     windows = [float(window) for window in signal_bundle["windows"]]
     signals_by_window = signal_bundle["signals_by_window"]
-    lamda = float(signal_bundle["lamda"])
     inset_intervals = build_inset_intervals(
         t_min=t_min,
         t_max=t_max,
@@ -449,7 +449,7 @@ def plot_sample(
         entropy_axis.tick_params(axis="y", labelcolor="tab:blue")
         twin_axes.append(entropy_axis)
 
-        axis.set_title(f"Entropy window = {window:g}s", fontsize=11)
+        axis.set_title(f"window = {window:g}s", fontsize=11)
         draw_matrix_insets(
             host_ax=axis,
             matrices=interval_matrices,
@@ -460,25 +460,7 @@ def plot_sample(
 
     axes[0].set_ylabel("Active events", color="tab:red")
     twin_axes[-1].set_ylabel("Local entropy", color="tab:blue")
-    axes[0].legend(
-        handles=[
-            Line2D([0], [0], color="tab:red", linewidth=1.6, label="Active events"),
-            Line2D([0], [0], color="tab:blue", linewidth=1.6, label="Local entropy"),
-            Line2D([0], [0], color="black", linestyle="--", linewidth=1.2, label="Breakpoint"),
-        ],
-        loc="upper left",
-        frameon=False,
-    )
-
-    fig.suptitle(
-        (
-            f"{spec.title}\n"
-            f"lambda={lamda:.2e}, entropy windows={', '.join(f'{window:g}s' for window in windows)}, "
-            f"nodes={net.num_nodes}, events={net.num_events}"
-        ),
-        fontsize=12,
-    )
-    fig.subplots_adjust(left=0.07, right=0.98, top=0.84, bottom=0.12, wspace=0.28)
+    fig.subplots_adjust(left=0.07, right=0.98, top=0.9, bottom=0.12, wspace=0.28)
 
     figure_dir.mkdir(parents=True, exist_ok=True)
     output_path = figure_path(spec, figure_dir)
