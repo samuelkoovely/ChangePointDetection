@@ -95,7 +95,7 @@ def parse_args() -> argparse.Namespace:
         "--dpi",
         type=int,
         default=300,
-        help="Raster resolution used when saving PNG output.",
+        help="Resolution used when saving rasterized plot elements.",
     )
     parser.add_argument(
         "--show",

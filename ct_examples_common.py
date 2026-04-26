@@ -49,14 +49,14 @@ SPECS = (
         title="Sparse Block-1 activity",
         sample_filename="block1activity_sparse_sample.pkl",
         signal_filename="block1activity_sparse_signal.pkl",
-        figure_filename="block1activity_sparse_local_entropy_panels.png",
+        figure_filename="block1activity_sparse_local_entropy_panels.pdf",
     ),
     SparseSampleSpec(
         key="block2",
         title="Sparse Block-2 activities",
         sample_filename="block2activities_sparse_sample.pkl",
         signal_filename="block2activities_sparse_signal.pkl",
-        figure_filename="block2activities_sparse_local_entropy_panels.png",
+        figure_filename="block2activities_sparse_local_entropy_panels.pdf",
     ),
 )
 
