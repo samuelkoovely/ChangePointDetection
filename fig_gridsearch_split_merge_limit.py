@@ -14,6 +14,8 @@ from scipy.sparse.csgraph import connected_components
 import auxiliary_functions
 from signal_generation import compute_signals_for_lambdas_prepared, prepare_signal_sample
 
+plt.style.use(Path(__file__).with_name("paper.mplstyle"))
+
 
 NETWORK_PATH = Path("./data/split_merge.pkl")
 SIGNAL_RESULTS_CANDIDATES = (
@@ -606,9 +608,8 @@ def main() -> None:
     )
     fig.legend(
         handles=legend_handles,
-        loc="lower left",
-        bbox_to_anchor=(0.02, 0.02, 0.96, 0.08),
-        mode="expand",
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.02),
         ncol=len(legend_handles),
         fontsize="medium",
         frameon=False,

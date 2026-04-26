@@ -11,6 +11,8 @@ from scipy.sparse.csgraph import connected_components
 
 import auxiliary_functions
 
+plt.style.use(Path(__file__).with_name("paper.mplstyle"))
+
 
 GLOBAL_RESULTS_BASE_CANDIDATES = (
     Path("gridsearch_results/motifs_global"),
@@ -653,9 +655,8 @@ def main():
         )
     fig.legend(
         handles=legend_handles,
-        loc="lower left",
-        bbox_to_anchor=(0.02, 0.02, 0.96, 0.08),
-        mode="expand",
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.02),
         ncol=len(legend_handles),
         fontsize="medium",
         frameon=False,

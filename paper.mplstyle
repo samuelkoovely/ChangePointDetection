@@ -1,0 +1,26 @@
+# Minimal publication style for the entropy figures.
+# Keep typography and formatter choices from alex_paper.mplstyle,
+
+
+font.family: sans-serif
+font.sans-serif: Helvetica, Arial, DejaVu Sans, sans-serif
+font.size: 13
+
+mathtext.default: regular
+
+lines.linewidth: 1.8
+
+axes.titlesize: 13
+axes.labelsize: 13
+axes.axisbelow: True
+axes.formatter.limits: -3, 3
+axes.formatter.use_mathtext: True
+axes.formatter.useoffset: False
+
+xtick.labelsize: 12
+ytick.labelsize: 12
+
+legend.frameon: False
+legend.fontsize: medium
+
+figure.dpi: 100

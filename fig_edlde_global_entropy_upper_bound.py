@@ -43,6 +43,8 @@ from fig_global_entropy import (
     make_inset_cmap,
 )
 
+plt.style.use(Path(__file__).with_name("paper.mplstyle"))
+
 
 TOTAL_NODES = N_GROUPS * N_PER_GROUP
 
@@ -236,9 +238,8 @@ def generate_figure(rates, lambdas, network_dir: Path, results_dir: Path, output
     )
     fig.legend(
         handles=legend_handles,
-        loc="lower left",
-        bbox_to_anchor=(0.02, 0.02, 0.96, 0.08),
-        mode="expand",
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.02),
         ncol=len(legend_handles),
         fontsize="medium",
         frameon=False,

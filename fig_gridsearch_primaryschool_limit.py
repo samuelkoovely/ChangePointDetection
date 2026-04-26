@@ -8,6 +8,8 @@ import numpy as np
 
 import auxiliary_functions
 
+plt.style.use(Path(__file__).with_name("paper.mplstyle"))
+
 
 SIGNAL_OUTPUT_BASE = Path("./gridsearch_results/primaryschool_day1")
 LIMIT_OUTPUT_BASE = Path("./gridsearch_results/primaryschool_day1_limit")
@@ -190,9 +192,8 @@ def main() -> None:
     fig.legend(
         legend_handles,
         legend_labels,
-        loc="lower left",
-        bbox_to_anchor=(0.02, 0.02, 0.96, 0.08),
-        mode="expand",
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.02),
         ncol=len(legend_handles),
         fontsize="medium",
         frameon=False,
@@ -202,7 +203,9 @@ def main() -> None:
     fig.tight_layout(rect=(0, 0.12, 1, 1))
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUTPUT_FIGURE, format="pdf", dpi=300, bbox_inches="tight")
-    plt.show()
+    if "agg" not in plt.get_backend().lower():
+        plt.show()
+    plt.close(fig)
 
 
 if __name__ == "__main__":
