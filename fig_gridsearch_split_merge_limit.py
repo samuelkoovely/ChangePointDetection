@@ -606,10 +606,13 @@ def main() -> None:
     )
     fig.legend(
         handles=legend_handles,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.02),
+        loc="lower left",
+        bbox_to_anchor=(0.02, 0.02, 0.96, 0.08),
+        mode="expand",
         ncol=len(legend_handles),
-        fontsize="small",
+        fontsize="medium",
+        frameon=False,
+        borderaxespad=0.0,
     )
 
     fig.subplots_adjust(left=0.07, right=0.995, top=0.92, bottom=0.17, wspace=0.18)

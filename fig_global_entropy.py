@@ -620,21 +620,46 @@ def main():
         for color, lamda in zip(forward_colors, selected_forward_lambdas)
     ]
     if backward_results_base is not None:
+        backward_reference_metadata = load_metadata(
+            reference_motif,
+            results_base=backward_results_base,
+            curve_kind=args.curve_kind,
+            reverse_time=True,
+        )
+        backward_lambdas = np.sort(
+            metadata_lambdas(
+                backward_reference_metadata,
+                curve_kind=args.curve_kind,
+                reverse_time=True,
+            )
+        )
+        backward_index = panel_specs[0].get("backward_index")
+        if backward_index is None:
+            backward_legend_lambda = float(backward_lambdas[-1])
+        else:
+            backward_legend_lambda = float(
+                backward_lambdas[
+                    min(max(int(backward_index), 0), len(backward_lambdas) - 1)
+                ]
+            )
         legend_handles.append(
             Line2D(
                 [0],
                 [0],
                 color=BACKWARD_CURVE_STYLE["color"],
                 linewidth=BACKWARD_CURVE_STYLE["linewidth"],
-                label="Backward Entropy",
+                label=f"{format_lambda_label(backward_legend_lambda)} (backward)",
             )
         )
     fig.legend(
         handles=legend_handles,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.02),
+        loc="lower left",
+        bbox_to_anchor=(0.02, 0.02, 0.96, 0.08),
+        mode="expand",
         ncol=len(legend_handles),
-        fontsize="small",
+        fontsize="medium",
+        frameon=False,
+        borderaxespad=0.0,
     )
 
     output_path = args.output or default_output_path(args.curve_kind, args.window)

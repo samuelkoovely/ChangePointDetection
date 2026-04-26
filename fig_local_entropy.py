@@ -543,10 +543,13 @@ def render_window_figure(
     ]
     fig.legend(
         handles=legend_handles,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.02),
+        loc="lower left",
+        bbox_to_anchor=(0.02, 0.02, 0.96, 0.08),
+        mode="expand",
         ncol=len(legend_handles),
-        fontsize="small",
+        fontsize="medium",
+        frameon=False,
+        borderaxespad=0.0,
     )
     fig.suptitle(f"{window_key(window)} s window", fontsize=14, y=0.98)
 
