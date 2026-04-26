@@ -48,9 +48,9 @@ INTER_TAU = 5.0
 POWER_CONFIG = [1]
 BASIS_NUM_COMMUNITIES = 4
 PANEL_TITLES = {
-    2: "(A) 5 links/s, no noise",
-    5: "(B) 5 links/s",
-    10: "(C) 10 links/s",
+    2: "(A)",
+    5: "(B)",
+    10: "(C)",
 }
 INSET_POSITIONS = (0.37,)
 
