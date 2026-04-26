@@ -13,7 +13,7 @@ DEFAULT_SUMMARY_PATHS = {
     "Frobenius": Path(
         "gridsearch_results/multibkps_block2activities_snapshots_frobenius/gridsearch_results.pkl"
     ),
-    "Laplacian": Path(
+    "LAD": Path(
         "gridsearch_results/multibkps_block2activities_snapshots_laplacians/gridsearch_results.pkl"
     ),
 }

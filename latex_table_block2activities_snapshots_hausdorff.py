@@ -11,7 +11,7 @@ DEFAULT_SUMMARY_PATHS = {
     "Frobenius": Path(
         "gridsearch_results/block2activities_snapshots_frobenius/gridsearch_results.pkl"
     ),
-    "Laplacian": Path(
+    "LAD": Path(
         "gridsearch_results/block2activities_snapshots_laplacians/gridsearch_results.pkl"
     ),
 }
@@ -21,7 +21,7 @@ DEFAULT_TEST_SUMMARY_PATHS = {
     "Frobenius": Path(
         "gridsearch_results/block2activities_snapshots_frobenius/test_set_results.pkl"
     ),
-    "Laplacian": Path(
+    "LAD": Path(
         "gridsearch_results/block2activities_snapshots_laplacians/test_set_results.pkl"
     ),
 }

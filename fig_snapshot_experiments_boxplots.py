@@ -35,7 +35,7 @@ EXPERIMENT_RESULT_PATHS = {
                 / "gridsearch_results/block1activity_snapshots_frobenius/test_set_results.pkl"
             ),
         },
-        "Laplacian": {
+        "LAD": {
             "train": (
                 BASE_DIR
                 / "gridsearch_results/block1activity_snapshots_laplacians/gridsearch_results.pkl"
@@ -67,7 +67,7 @@ EXPERIMENT_RESULT_PATHS = {
                 / "gridsearch_results/block2activities_snapshots_frobenius/test_set_results.pkl"
             ),
         },
-        "Laplacian": {
+        "LAD": {
             "train": (
                 BASE_DIR
                 / "gridsearch_results/block2activities_snapshots_laplacians/gridsearch_results.pkl"
@@ -99,7 +99,7 @@ EXPERIMENT_RESULT_PATHS = {
                 / "gridsearch_results/multibkps_block2activities_snapshots_frobenius/test_set_results.pkl"
             ),
         },
-        "Laplacian": {
+        "LAD": {
             "train": (
                 BASE_DIR
                 / "gridsearch_results/multibkps_block2activities_snapshots_laplacians/gridsearch_results.pkl"
@@ -115,7 +115,7 @@ EXPERIMENT_RESULT_PATHS = {
 METHOD_COLORS = {
     "Entropy": "#4C78A8",
     "Frobenius": "#54A24B",
-    "Laplacian": "#B279A2",
+    "LAD": "#B279A2",
 }
 
 
