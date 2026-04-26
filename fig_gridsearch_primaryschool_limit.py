@@ -134,8 +134,8 @@ def window_title(window_seconds: float) -> str:
 
     minutes = float(window_seconds) / 60.0
     if minutes.is_integer():
-        return f"{int(minutes)} min window"
-    return f"{minutes:g} min window"
+        return rf"$\Delta = {int(minutes)}$ min"
+    return rf"$\Delta = {minutes:g}$ min"
 
 
 def format_lambda_label(lamda: float) -> str:

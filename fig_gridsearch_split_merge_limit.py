@@ -453,8 +453,8 @@ def window_title(window: float) -> str:
 
     seconds = float(window)
     if seconds.is_integer():
-        return f"{int(seconds)} s window"
-    return f"{seconds:g} s window"
+        return rf"$\Delta = {int(seconds)}$ s"
+    return rf"$\Delta = {seconds:g}$ s"
 
 
 def format_lambda_label(lamda: float) -> str:

@@ -23,7 +23,7 @@ RESULTS_BASE_CANDIDATES = (
     Path("gridsearch_results/motifs_run1"),
     Path("gridsearch_results/motifs_b"),
 )
-DEFAULT_WINDOWS = [1.0, 5.0, 10.0]
+DEFAULT_WINDOWS = [5.0]
 DEFAULT_OUTPUT_DIR = Path("./figures")
 MOTIF_NAMES = ("merge_merge", "merge_split", "split_merge")
 DEFAULT_CURVE_INDICES = [5, 6, 7, 8]
@@ -552,10 +552,8 @@ def render_window_figure(
         frameon=False,
         borderaxespad=0.0,
     )
-    fig.suptitle(f"{window_key(window)} s window", fontsize=14, y=0.98)
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.subplots_adjust(left=0.07, right=0.995, top=0.89, bottom=0.17, wspace=0.18)
+    fig.subplots_adjust(left=0.07, right=0.995, top=0.95, bottom=0.17, wspace=0.18)
     fig.savefig(output_path, format="pdf", dpi=300, bbox_inches="tight")
     if "agg" not in plt.get_backend().lower():
         plt.show()
