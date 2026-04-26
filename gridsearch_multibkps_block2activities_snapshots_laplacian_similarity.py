@@ -1,4 +1,3 @@
-import numpy as np
 import pickle
 
 from gridsearch_block2activities_snapshots_laplacian_similarity import (
@@ -7,8 +6,9 @@ from gridsearch_block2activities_snapshots_laplacian_similarity import (
 )
 from gridsearch_score_snapshots import extract_true_change_points
 
-# `ruptures` requires strictly positive penalties.
-PENALTIES = np.linspace(0.01, 2.0, 10)
+OUTDIR = "./gridsearch_results/multibkps_block2activities_snapshots_laplacians"
+SIGNALS_OUTDIR = f"{OUTDIR}/signals"
+SECOND_WINDOW_SCALE = 2.0
 
 
 with open("data/multibkps_block2activities_snapshots.pkl", "rb") as f:
@@ -43,25 +43,27 @@ summary = grid_search_laplacian_similarity(
     n_eigens=n_eigens,
     margin=margin,
     n_jobs=n_jobs,
-    outdir="./gridsearch_results/multibkps_block2activities_snapshots_laplacians",
-    kernel="linear",
+    outdir=OUTDIR,
     normalize=False,
     save_signals=True,
-    signals_outdir="./gridsearch_results/multibkps_block2activities_snapshots_laplacians/signals",
+    signals_outdir=SIGNALS_OUTDIR,
     selection_metric="f1",
-    stopping_rule="penalty",
-    penalties=PENALTIES,
+    top=True,
+    difference=True,
+    second_window_scale=SECOND_WINDOW_SCALE,
 )
 
 print("Number of samples:", len(training_samples))
 print("Score array shape:", summary["score_array"].shape)
 print("Backend used:", summary["backend_used"])
 print("Selection metric:", summary["selection_metric"])
-print("Stopping rule:", summary["stopping_rule"])
-print("Penalties:", summary["penalties"])
+print("Ranking rule:", summary["ranking_rule"])
+print("Top singular values:", summary["top"])
+print("Difference signal:", summary["difference"])
+print("Second-window scale:", summary["second_window_scale"])
 print("Best n_eigen:", summary["best_n_eigen"])
 print("Best window_length:", summary["best_window_length"])
-print("Best penalty:", summary["best_penalty"])
+print("Best second_window_length:", summary["best_second_window_length"])
 print("Best selected score:", summary["best_score"])
 print("Best mean F1:", summary["best_f1"])
 print("Best mean Hausdorff:", summary["best_hausdorff"])
