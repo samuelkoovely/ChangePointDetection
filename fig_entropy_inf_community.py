@@ -328,7 +328,7 @@ handles = [
 ax_c.legend(
     handles,
     df_flows["type"].unique(),
-    title="Flow Types",
+    title="Group",
     loc="center left",
     bbox_to_anchor=(1, 0.5),
 )
