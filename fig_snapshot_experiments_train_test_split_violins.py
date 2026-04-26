@@ -261,7 +261,7 @@ def build_figure(
     fig_width = 3.8 + 2.6 * len(metrics_by_experiment)
     fig, ax = plt.subplots(1, 1, figsize=(fig_width, 4.3))
     draw_grouped_split_violins(ax=ax, metrics_by_experiment=metrics_by_experiment)
-    ax.set_ylabel("Hausdorff distance (log scale)")
+    ax.set_ylabel("Hausdorff distance")
     ax.set_title("Train/test Hausdorff distributions across snapshot experiments")
 
     legend_handles = [
