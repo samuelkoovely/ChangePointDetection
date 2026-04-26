@@ -1,5 +1,6 @@
 import pickle
 import time
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,12 +15,18 @@ from sankeyflow import Sankey
 START_TIME = time.perf_counter()
 
 
-ENTROPY_DIR = "//scratch/tmp/180/skoove/primaryschoolnet_rw/conditional_S_selected_hr"
 CLUSTER_DIR = "//scratch/tmp/180/skoove/primaryschoolnet_rw"
 NETWORK_PATH = (
     "data/primaryschoolnet"
 )
 CSV_PATH = "data/primaryschool.csv"
+PRIMARY_SCHOOL_SIGNAL_PATH = Path(
+    "gridsearch_results/primaryschool_day1/window_S_selected/3600/window_S1.00000000000"
+)
+PRIMARY_SCHOOL_RUPTURES_RESULTS_PATH = Path(
+    "gridsearch_results/primaryschool_day1_ruptures/forward/window_3600/lamda_1.00000000000/ruptures_results.pkl"
+)
+PRIMARY_SCHOOL_SELECTED_PENALTY = 60.0
 
 SELECTED_LAMBDAS = np.logspace(-5, 0, 10)
 LAMBDAS_GROWING = np.logspace(-5, 0, 200)
@@ -40,16 +47,6 @@ BEST_CLUSTER_INDICES = {
 }
 TIME_LABELS = ["08:30", "10:30", "12:00", "14:00", "16:00"]
 TIME_LABEL_POSITIONS = [0.1, 0.3, 0.5, 0.7, 0.9]
-
-
-def load_conditional_entropies(lambdas):
-    conditional_entropies = []
-    for lamda in lambdas:
-        path = f"{ENTROPY_DIR}/S_rate{lamda:.11f}"
-        with open(path, "rb") as handle:
-            s_rate = pickle.load(handle)
-        conditional_entropies.append(s_rate["S_rate"][f"{lamda:.11f}"])
-    return conditional_entropies
 
 
 def load_cluster_results(folder_name, lambdas):
@@ -135,7 +132,39 @@ def build_sankey_nodes(flow_frames):
     return nodes
 
 
-Conditional_S_selected_hr = load_conditional_entropies(SELECTED_LAMBDAS)
+def load_primary_school_penalty_plot_data(
+    signal_path: Path = PRIMARY_SCHOOL_SIGNAL_PATH,
+    results_path: Path = PRIMARY_SCHOOL_RUPTURES_RESULTS_PATH,
+    penalty: float = PRIMARY_SCHOOL_SELECTED_PENALTY,
+):
+    with open(signal_path, "rb") as handle:
+        signal_payload = pickle.load(handle)
+
+    signal = np.asarray(signal_payload["signal_array"], dtype=float)
+    t_hours = np.asarray(signal_payload["t_samples"], dtype=float) / 3600.0
+
+    with open(results_path, "rb") as handle:
+        ruptures_results = pickle.load(handle)
+
+    for result in ruptures_results["lambda_results"]:
+        if np.isclose(float(result["penalty"]), float(penalty)):
+            return {
+                "signal": signal,
+                "t_hours": t_hours,
+                "change_point_indices": np.asarray(
+                    result["change_point_indices"],
+                    dtype=int,
+                ),
+                "change_point_hours": np.asarray(
+                    result["change_point_t_hours"],
+                    dtype=float,
+                ),
+                "lamda": float(ruptures_results["lamda"]),
+                "window_minutes": float(ruptures_results["window_minutes"]),
+                "penalty": float(result["penalty"]),
+            }
+
+    raise ValueError(f"Could not find penalty={penalty} in {results_path}.")
 
 net_rw = ContTempNetwork.load(
     NETWORK_PATH,
@@ -203,14 +232,43 @@ gs = fig.add_gridspec(1, 3)
 
 ax_a = fig.add_subplot(gs[0, 0])
 list_colors = auxiliary_functions.generate_plasma_colors(len(SELECTED_LAMBDAS))
-
-window = 180
-lamda = np.logspace(-5,0,10)[-1]
-with open(f'//scratch/tmp/180/skoove/primaryschoolnet_rw/window_S_selected/{window}/window_S{lamda:.11f}', 'rb') as f:
-            S = pickle.load(f)['window_S'][f'{lamda:.11f}']
-
-ax_a.plot(net_times_hours[(window // 2)+1 :1556- (window // 2)], S[1:1556-window], color = list_colors[-1], alpha = 0.75)
-ax_a.set_xlabel('Time')
+primary_school_panel = load_primary_school_penalty_plot_data()
+ax_a.plot(
+    primary_school_panel["t_hours"],
+    primary_school_panel["signal"],
+    color=list_colors[-1],
+    alpha=0.75,
+)
+for cp_hour in primary_school_panel["change_point_hours"]:
+    ax_a.axvline(
+        cp_hour,
+        color="red",
+        linestyle="--",
+        linewidth=1.1,
+        alpha=0.9,
+    )
+if len(primary_school_panel["change_point_indices"]) > 0:
+    ax_a.scatter(
+        primary_school_panel["change_point_hours"],
+        primary_school_panel["signal"][primary_school_panel["change_point_indices"]],
+        color="red",
+        s=14,
+        zorder=3,
+    )
+ax_a.text(
+    0.02,
+    0.98,
+    (
+        rf"$\lambda$ = {primary_school_panel['lamda']:.2e}, "
+        rf"window = {primary_school_panel['window_minutes']:g} min, "
+        rf"pen = {primary_school_panel['penalty']:g}"
+    ),
+    transform=ax_a.transAxes,
+    va="top",
+    fontsize=9,
+)
+ax_a.set_xlabel("Time (hours)")
+ax_a.set_ylabel("Entropy")
     
 ax_a.set_title("(A) Localized Conditional entropy", loc="left", fontsize=12)
 
