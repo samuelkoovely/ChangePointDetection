@@ -1,27 +1,6 @@
 import numpy as np
 import scipy.sparse as ss
-import networkx as nx
 
-from benchmark_utils import laplacian_embeddings
-
-# Graph distances
-def distance_procrustes_LE(A, B, k = 10, normalize=True):
-    """
-    Compute Procrustes distance between the principal subspaces of 2 adjacency matrices
-    """
-    sparse = False
-    if isinstance(A, (ss.csc_matrix, ss.coo_matrix, ss.csr_matrix)):
-        sparse = True
-    LE1 = laplacian_embeddings(A, k=k, sparse=sparse, normalize=normalize)
-
-    sparse = False
-    if isinstance(B, (ss.csc_matrix, ss.coo_matrix, ss.csr_matrix)):
-        sparse = True
-    LE2 = laplacian_embeddings(B, k=k, sparse=sparse, normalize=normalize)
-
-    dist = distance_procrustes(LE1, LE2)
-
-    return dist
 
 def distance_frobenius(A, B):
     """
@@ -43,17 +22,6 @@ def distance_frobenius(A, B):
 
     return dist
 
-
-def distance_procrustes(A, B):
-    """
-    Compute "Procrustes" distance between 2 matrices
-    """
-
-    SD = SubspaceDistance(metric='Procrustes')
-    SD.fit(A, B)
-    dist = SD.distance_
-
-    return dist
 
 
 # Subspace distances

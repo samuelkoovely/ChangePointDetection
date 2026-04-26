@@ -3,6 +3,15 @@ import scipy
 import scipy.sparse as ss
 from sklearn.cluster import KMeans
 
+from benchmark_methods_lad import (
+    compute_laplacian_signatures as compute_lad_laplacian_signatures,
+)
+from benchmark_methods_lad import (
+    compute_similarity_signal_from_signatures as compute_lad_similarity_signal_from_signatures,
+)
+from benchmark_methods_lad import (
+    laplacian_spectrum_similarity as compute_lad_laplacian_spectrum_similarity,
+)
 from benchmark_distances import distance_frobenius
 from benchmark_utils import laplacian, norm_laplacian
 
@@ -131,140 +140,66 @@ def _prepare_snapshots_for_distances(data):
     return dense_snapshots
 
 
-def _smallest_eigen_signature(L, n_eigen):
-    n_eigen = int(n_eigen)
-    if n_eigen <= 0:
-        raise ValueError("n_eigen must be strictly positive.")
-
-    if not ss.isspmatrix(L):
-        L = ss.csr_matrix(L)
-
-    L = L.asfptype()
-    n_nodes = int(L.shape[0])
-    if n_nodes <= 1:
-        return np.zeros(n_eigen, dtype=float)
-
-    k = min(n_eigen, n_nodes - 1)
-    if k <= 0:
-        return np.zeros(n_eigen, dtype=float)
-
-    try:
-        eigenvalues = ss.linalg.eigsh(
-            L,
-            return_eigenvectors=False,
-            k=k,
-            which="SA",
-        )
-    except Exception:
-        return np.zeros(n_eigen, dtype=float)
-
-    eigenvalues = np.sort(np.asarray(eigenvalues, dtype=float))
-    if k < n_eigen:
-        eigenvalues = np.pad(eigenvalues, (0, n_eigen - k))
-
-    norm = float(np.linalg.norm(eigenvalues))
-    if not np.isfinite(norm) or norm == 0.0:
-        return np.zeros(n_eigen, dtype=float)
-
-    return eigenvalues / norm
-
-
-def compute_laplacian_signatures(data, n_eigen, normalize=True):
+def compute_laplacian_signatures(
+    data,
+    n_eigen,
+    normalize=False,
+    top=True,
+):
     """
-    Compute one normalized eigenvalue signature per snapshot.
+    Compute one LAD-style singular-value signature per snapshot.
     """
 
-    n_eigen = int(n_eigen)
-    if n_eigen <= 0:
-        raise ValueError("n_eigen must be strictly positive.")
-
-    laplacians = _iter_laplacians(data, normalize=normalize)
-    if not laplacians:
-        return np.empty((0, n_eigen), dtype=float)
-
-    signatures = np.empty((len(laplacians), n_eigen), dtype=float)
-    for i, L in enumerate(laplacians):
-        signatures[i, :] = _smallest_eigen_signature(L, n_eigen=n_eigen)
-
-    return signatures
+    return compute_lad_laplacian_signatures(
+        data=data,
+        n_eigen=n_eigen,
+        normalize=normalize,
+        top=top,
+    )
 
 
 def compute_similarity_signal_from_signatures(
     laplacian_signatures,
     window_length,
     n_eigen=None,
+    difference=False,
+    second_window_length=None,
 ):
     """
-    Compute the Huang et al. signal from precomputed Laplacian signatures.
+    Compute the LAD rolling anomaly signal from precomputed signatures.
     """
 
-    window_length = int(window_length)
-    if window_length <= 0:
-        raise ValueError("window_length must be strictly positive.")
-
-    laplacian_signatures = np.asarray(laplacian_signatures, dtype=float)
-    if laplacian_signatures.ndim != 2:
-        raise ValueError(
-            "laplacian_signatures must be a 2D array with shape "
-            "(n_snapshots, n_eigen)."
-        )
-
-    if n_eigen is None:
-        n_eigen = int(laplacian_signatures.shape[1]) if laplacian_signatures.size else 0
-    else:
-        n_eigen = int(n_eigen)
-
-    num_snapshots = int(laplacian_signatures.shape[0])
-    if window_length >= num_snapshots:
-        return {
-            "window_length": window_length,
-            "n_eigen": n_eigen,
-            "signal": np.array([], dtype=float),
-            "snapshot_indices": np.array([], dtype=int),
-        }
-
-    signal_values = []
-    snapshot_indices = np.arange(window_length, num_snapshots, dtype=int)
-
-    for snapshot_index in snapshot_indices:
-        window = laplacian_signatures[snapshot_index - window_length : snapshot_index].T
-        try:
-            u, _, _ = scipy.linalg.svd(window, compute_uv=True, full_matrices=False)
-        except Exception:
-            return {
-                "window_length": window_length,
-                "n_eigen": n_eigen,
-                "signal": np.array([], dtype=float),
-                "snapshot_indices": np.array([], dtype=int),
-            }
-
-        score = 1.0 - abs(float(np.dot(u[:, 0], laplacian_signatures[snapshot_index])))
-        signal_values.append(score)
-
-    return {
-        "window_length": window_length,
-        "n_eigen": n_eigen,
-        "signal": np.asarray(signal_values, dtype=float),
-        "snapshot_indices": snapshot_indices,
-    }
-
-
-def laplacian_spectrum_similarity(data, window_length, normalize=True, n_eigen=6):
-    """
-    Compute Laplacian anomaly detection statistic [Huang et al. 2020].
-    """
-
-    laplacian_signatures = compute_laplacian_signatures(
-        data=data,
-        n_eigen=n_eigen,
-        normalize=normalize,
-    )
-    result = compute_similarity_signal_from_signatures(
+    return compute_lad_similarity_signal_from_signatures(
         laplacian_signatures=laplacian_signatures,
         window_length=window_length,
         n_eigen=n_eigen,
+        difference=difference,
+        second_window_length=second_window_length,
     )
-    return result["signal"], result["snapshot_indices"]
+
+
+def laplacian_spectrum_similarity(
+    data,
+    window_length,
+    normalize=False,
+    n_eigen=6,
+    top=True,
+    difference=False,
+    second_window_length=None,
+):
+    """
+    Compute the LAD spectrum-anomaly signal for one temporal network.
+    """
+
+    return compute_lad_laplacian_spectrum_similarity(
+        data=data,
+        window_length=window_length,
+        normalize=normalize,
+        n_eigen=n_eigen,
+        top=top,
+        difference=difference,
+        second_window_length=second_window_length,
+    )
 
 
 def NCPD(data, window_length, n_eigen, normalize=False):
