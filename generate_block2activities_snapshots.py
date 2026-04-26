@@ -1,124 +1,32 @@
 from __future__ import annotations
 
-import pickle
 from pathlib import Path
 
-import numpy as np
-
-from TemporalNetwork import ContTempNetwork
-
-
-DATASET_PATHS = (
-    (Path("data/block2activities.pkl"), Path("data/block2activities_snapshots.pkl")),
-    (Path("data/block2activities_test.pkl"), Path("data/block2activities_snapshots_test.pkl")),
+from generate_snapshot_dataset_common import (
+    AGGREGATION_WINDOW,
+    SNAPSHOTS_TO_SKIP_AT_START,
+    convert_dataset_files,
 )
-AGGREGATION_WINDOW = 4
-SNAPSHOTS_TO_SKIP_AT_START = 1
 
 
-def aggregate_breakpoints(
-    breakpoints: list[float],
-    aggregation_window: int,
-    num_snapshots: int,
-) -> list[int]:
-    aggregated_breakpoints = sorted(
-        {
-            int(float(breakpoint) // aggregation_window) - SNAPSHOTS_TO_SKIP_AT_START
-            for breakpoint in breakpoints
-        }
-    )
-    return [
-        breakpoint
-        for breakpoint in aggregated_breakpoints
-        if 0 <= breakpoint < num_snapshots
-    ]
-
-
-def build_snapshot_network(
-    net: ContTempNetwork,
-    aggregation_window: int,
-) -> tuple[ContTempNetwork, int]:
-    source_nodes = []
-    target_nodes = []
-    starting_times = []
-    ending_times = []
-
-    snapshot_starts = list(
-        range(
-            SNAPSHOTS_TO_SKIP_AT_START * aggregation_window,
-            int(net.times[-1] - aggregation_window),
-            aggregation_window,
-        )
-    )
-
-    for snapshot_start in snapshot_starts:
-        snapshot_end = snapshot_start + aggregation_window
-        matrix_snapshot = net.compute_static_adjacency_matrix(
-            start_time=snapshot_start,
-            end_time=snapshot_end,
-        ).toarray()
-
-        matrix_snapshot = (matrix_snapshot > 0).astype(int)
-        source_nodes_snapshot = np.nonzero(matrix_snapshot)[0]
-        target_nodes_snapshot = np.nonzero(matrix_snapshot)[1]
-        starting_times_snapshot = [snapshot_start] * len(source_nodes_snapshot)
-        ending_times_snapshot = [snapshot_end] * len(source_nodes_snapshot)
-
-        source_nodes += list(source_nodes_snapshot)
-        target_nodes += list(target_nodes_snapshot)
-        starting_times += starting_times_snapshot
-        ending_times += ending_times_snapshot
-
-    snap_net = ContTempNetwork(
-        source_nodes=source_nodes,
-        target_nodes=target_nodes,
-        starting_times=starting_times,
-        ending_times=ending_times,
-        merge_overlapping_events=True,
-    )
-
-    return snap_net, len(snapshot_starts)
-
-
-def convert_dataset(dataset: list[dict[str, object]]) -> list[dict[str, object]]:
-    snapshots_dataset = []
-
-    for entry in dataset:
-        net = entry["tnet"]
-        breakpoints = [float(breakpoint) for breakpoint in entry["bkps"]]
-
-        snap_net, num_snapshots = build_snapshot_network(
-            net=net,
-            aggregation_window=AGGREGATION_WINDOW,
-        )
-        aggregated_breakpoints = aggregate_breakpoints(
-            breakpoints=breakpoints,
-            aggregation_window=AGGREGATION_WINDOW,
-            num_snapshots=num_snapshots,
-        )
-
-        snapshots_dataset.append(
-            {
-                "tnet": snap_net,
-                "aggregation_window": AGGREGATION_WINDOW,
-                "bkps": aggregated_breakpoints,
-                "n_bkps": len(aggregated_breakpoints),
-            }
-        )
-
-    return snapshots_dataset
+DATASET_SPECS = (
+    (
+        Path("data/block2activities_train.pkl"),
+        (Path("data/block2activities_train_snapshots.pkl"),),
+    ),
+    (
+        Path("data/block2activities_test.pkl"),
+        (Path("data/block2activities_test_snapshots.pkl"),),
+    ),
+)
 
 
 def main() -> None:
-    for input_path, output_path in DATASET_PATHS:
-        with open(input_path, "rb") as handle:
-            dataset = pickle.load(handle)
-
-        snapshots_dataset = convert_dataset(dataset)
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "wb") as handle:
-            pickle.dump(snapshots_dataset, handle)
+    convert_dataset_files(
+        dataset_specs=DATASET_SPECS,
+        aggregation_window=AGGREGATION_WINDOW,
+        snapshots_to_skip_at_start=SNAPSHOTS_TO_SKIP_AT_START,
+    )
 
 
 if __name__ == "__main__":

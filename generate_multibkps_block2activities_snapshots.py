@@ -19,7 +19,7 @@ DATASET_PATHS = (
     ),
 )
 AGGREGATION_WINDOW = 4
-SNAPSHOTS_TO_SKIP_AT_START = 1
+SNAPSHOTS_TO_SKIP_AT_START = 0
 
 
 def aggregate_breakpoints(
