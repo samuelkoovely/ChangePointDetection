@@ -14,12 +14,19 @@ from fig_snapshot_experiments_train_test_split_violins import (
     _compute_hausdorff_cap,
 )
 
+plt.style.use(Path(__file__).with_name("paper.mplstyle"))
+
 
 BASE_DIR = Path(__file__).resolve().parent
 ENTROPY_COLOR = METHOD_COLORS["Entropy"]
 DEFAULT_OUTPUT = (
     BASE_DIR / "figures" / "fig_ct_experiments_train_test_split_violins.pdf"
 )
+DISPLAY_EXPERIMENTS = (
+    ("CT Block2", "Change in Activity"),
+    ("CT Block1", "Change of Structure"),
+)
+DEFAULT_FIGURE_SIZE = (6.5, 2.7)
 
 
 def parse_args() -> argparse.Namespace:
@@ -142,7 +149,19 @@ def draw_grouped_split_violins(
     ax: plt.Axes,
     metrics_by_experiment: dict[str, dict[str, dict[str, np.ndarray]]],
 ) -> None:
-    experiment_names = list(metrics_by_experiment.keys())
+    ordered_experiments = [
+        (source_name, display_name)
+        for source_name, display_name in DISPLAY_EXPERIMENTS
+        if source_name in metrics_by_experiment
+    ]
+    remaining_experiments = [
+        (experiment_name, experiment_name)
+        for experiment_name in metrics_by_experiment
+        if experiment_name not in {source_name for source_name, _ in ordered_experiments}
+    ]
+    ordered_experiments.extend(remaining_experiments)
+    experiment_names = [source_name for source_name, _ in ordered_experiments]
+    display_labels = [display_name for _, display_name in ordered_experiments]
     centers = np.arange(len(experiment_names), dtype=float) * 2.9
     width = 0.56
 
@@ -208,24 +227,21 @@ def draw_grouped_split_violins(
         )
 
     ax.set_xticks(centers)
-    ax.set_xticklabels(experiment_names)
+    ax.set_xticklabels(display_labels)
     ax.set_xlim(centers[0] - 0.95, centers[-1] + 0.95)
     ax.set_ylim(
         bottom=0.0,
         top=hausdorff_cap * 1.12 if has_infinite_values else None,
     )
-    ax.tick_params(axis="x", labelsize=11)
-    ax.tick_params(axis="y", labelsize=11)
 
 
 def build_figure(
     metrics_by_experiment: dict[str, dict[str, dict[str, np.ndarray]]],
 ) -> plt.Figure:
-    fig, ax = plt.subplots(1, 1, figsize=(7.4, 4.1))
+    fig, ax = plt.subplots(1, 1, figsize=DEFAULT_FIGURE_SIZE)
     draw_grouped_split_violins(ax=ax, metrics_by_experiment=metrics_by_experiment)
     ax.set_ylabel("Hausdorff distance")
-    ax.set_title("Train/test Hausdorff distributions across CT experiments")
-    fig.tight_layout()
+    fig.subplots_adjust(left=0.11, right=0.99, top=0.95, bottom=0.26)
     return fig
 
 
