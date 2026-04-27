@@ -15,6 +15,7 @@ from sankeyflow import Sankey
 START_TIME = time.perf_counter()
 
 
+OUTPUT_PATH = Path("figures/fig_entropy_inf_community.pdf")
 CLUSTER_DIR = "//scratch/tmp/180/skoove/primaryschoolnet_rw"
 NETWORK_PATH = (
     "data/primaryschoolnet"
@@ -231,12 +232,11 @@ fig = plt.figure(figsize=(12, 4))
 gs = fig.add_gridspec(1, 3)
 
 ax_a = fig.add_subplot(gs[0, 0])
-list_colors = auxiliary_functions.generate_plasma_colors(len(SELECTED_LAMBDAS))
 primary_school_panel = load_primary_school_penalty_plot_data()
 ax_a.plot(
     primary_school_panel["t_hours"],
     primary_school_panel["signal"],
-    color=list_colors[-1],
+    color="tab:blue",
     alpha=0.75,
 )
 for cp_hour in primary_school_panel["change_point_hours"]:
@@ -337,6 +337,7 @@ ax_c.set_yticks([])
 ax_c.set_frame_on(False)
 
 plt.tight_layout()
-#plt.savefig('/home/b/skoove/Desktop/ChangePointDetection/fig_entropy_inf_community.pdf', format='pdf', dpi=300, bbox_inches='tight')
+OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+plt.savefig(OUTPUT_PATH, format="pdf", dpi=300, bbox_inches="tight")
 plt.show()
 print(f"Total runtime: {time.perf_counter() - START_TIME:.2f} s")
