@@ -13,6 +13,7 @@ import numpy as np
 from joblib import Parallel, delayed
 
 from FlowStability import (
+    Clustering,
     FlowIntegralClustering,
     SparseClustering,
     avg_norm_var_information,
@@ -166,6 +167,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Overwrite existing per-lambda clustering files.",
     )
+    parser.add_argument(
+        "--dense-clustering",
+        action="store_true",
+        help=(
+            "Convert per-interval transition matrices to dense NumPy arrays before "
+            "building FlowIntegralClustering and use dense Clustering instead of "
+            "SparseClustering. This bypasses SparseStochMat during clustering."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -175,6 +185,31 @@ def load_pickle(path: Path) -> Any:
             return pickle.load(handle)
     with open(path, "rb") as handle:
         return pickle.load(handle)
+
+
+def to_dense_matrix(matrix: Any) -> np.ndarray:
+    if isinstance(matrix, np.ndarray):
+        return np.asarray(matrix, dtype=float)
+    if hasattr(matrix, "toarray"):
+        return np.asarray(matrix.toarray(), dtype=float)
+    return np.asarray(matrix, dtype=float)
+
+
+def to_dense_matrix_list(matrices: Sequence[Any]) -> list[np.ndarray]:
+    return [to_dense_matrix(matrix) for matrix in matrices]
+
+
+def build_clustering(
+    flow_integral_clustering: FlowIntegralClustering,
+    dense_clustering: bool = False,
+) -> Clustering | SparseClustering:
+    clustering_cls = Clustering if dense_clustering else SparseClustering
+    return clustering_cls(
+        p1=flow_integral_clustering.p1,
+        p2=None,
+        T=flow_integral_clustering.T_list[-1],
+        S=flow_integral_clustering.I_list[0],
+    )
 
 
 def candidate_matrix_files(stem: Path) -> list[Path]:
@@ -494,6 +529,7 @@ def compute_interval_result(
     n_meta_iter_max: int,
     n_sub_iter_max: int,
     reverse_time: bool = False,
+    dense_clustering: bool = False,
 ) -> dict[str, Any]:
     start = int(interval["start"])
     stop = int(interval["stop"])
@@ -507,18 +543,22 @@ def compute_interval_result(
             f"{len(interval_times)} times."
         )
 
+    flow_input = (
+        to_dense_matrix_list(interval_inter_t)
+        if dense_clustering
+        else interval_inter_t
+    )
+
     flow_integral_clustering = FlowIntegralClustering(
-        T_inter_list=interval_inter_t,
+        T_inter_list=flow_input,
         time_list=interval_times,
         verbose=False,
         reverse_time=reverse_time,
     )
 
-    clustering = SparseClustering(
-        p1=flow_integral_clustering.p1,
-        p2=None,
-        T=flow_integral_clustering.T_list[-1],
-        S=flow_integral_clustering.I_list[0],
+    clustering = build_clustering(
+        flow_integral_clustering=flow_integral_clustering,
+        dense_clustering=dense_clustering,
     )
 
     n_loops, cluster_lists, stabilities, seeds = run_multi_louvain(
@@ -567,6 +607,7 @@ def compute_interval_result(
         "time_list": interval_times,
         "compatibility_cluster_list": cluster_lists[best_index],
         "matrix_source": "inter_T",
+        "dense_clustering": bool(dense_clustering),
     }
 
 
@@ -579,6 +620,7 @@ def compute_interval_result_from_transition_list(
     n_meta_iter_max: int,
     n_sub_iter_max: int,
     reverse_time: bool = False,
+    dense_clustering: bool = False,
 ) -> dict[str, Any]:
     transition_list = list(transition_list)
     interval_times = np.asarray(time_array, dtype=float)
@@ -590,18 +632,22 @@ def compute_interval_result_from_transition_list(
             f"{len(interval_times)} times."
         )
 
+    flow_input = (
+        to_dense_matrix_list(transition_list)
+        if dense_clustering
+        else transition_list
+    )
+
     flow_integral_clustering = FlowIntegralClustering(
-        T_list=transition_list,
+        T_list=flow_input,
         time_list=interval_times,
         verbose=False,
         reverse_time=reverse_time,
     )
 
-    clustering = SparseClustering(
-        p1=flow_integral_clustering.p1,
-        p2=None,
-        T=flow_integral_clustering.T_list[-1],
-        S=flow_integral_clustering.I_list[0],
+    clustering = build_clustering(
+        flow_integral_clustering=flow_integral_clustering,
+        dense_clustering=dense_clustering,
     )
 
     n_loops, cluster_lists, stabilities, seeds = run_multi_louvain(
@@ -650,6 +696,7 @@ def compute_interval_result_from_transition_list(
         "time_list": interval_times,
         "compatibility_cluster_list": cluster_lists[best_index],
         "matrix_source": "T",
+        "dense_clustering": bool(dense_clustering),
     }
 
 
@@ -682,6 +729,7 @@ def worker(
     n_sub_iter_max: int,
     reverse_time: bool = False,
     overwrite: bool = False,
+    dense_clustering: bool = False,
 ) -> float:
     lamda = float(lamda)
 
@@ -714,6 +762,7 @@ def worker(
                 n_meta_iter_max=n_meta_iter_max,
                 n_sub_iter_max=n_sub_iter_max,
                 reverse_time=reverse_time,
+                dense_clustering=dense_clustering,
             )
             save_interval_result(
                 result=result,
@@ -750,6 +799,7 @@ def worker(
                 n_meta_iter_max=n_meta_iter_max,
                 n_sub_iter_max=n_sub_iter_max,
                 reverse_time=reverse_time,
+                dense_clustering=dense_clustering,
             )
             result["transition_layout_used"] = mode
             save_interval_result(
@@ -816,6 +866,7 @@ def main() -> None:
         "n_sub_iter_max": int(args.n_sub_iter_max),
         "n_jobs": int(args.n_jobs),
         "reverse_time": bool(args.reverse_time),
+        "dense_clustering": bool(args.dense_clustering),
         "include_full_interval": bool(args.include_full_interval),
         "intervals": intervals,
         "change_point_signal_indices": np.asarray(
@@ -851,6 +902,7 @@ def main() -> None:
             n_sub_iter_max=int(args.n_sub_iter_max),
             reverse_time=bool(args.reverse_time),
             overwrite=bool(args.overwrite),
+            dense_clustering=bool(args.dense_clustering),
         )
         for lamda in lambdas
     )
