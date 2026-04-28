@@ -16,11 +16,10 @@ START_TIME = time.perf_counter()
 
 
 OUTPUT_PATH = Path("figures/fig_entropy_inf_community.pdf")
-CLUSTER_DIR = "//scratch/tmp/180/skoove/primaryschoolnet_rw"
+CLUSTER_DIR = Path("//scratch/tmp/180/skoove/primaryschoolnet_rw")
 NETWORK_PATH = (
     "data/primaryschoolnet"
 )
-CSV_PATH = "data/primaryschool.csv"
 PRIMARY_SCHOOL_SIGNAL_PATH = Path(
     "gridsearch_results/primaryschool_day1/window_S_selected/3600/window_S1.00000000000"
 )
@@ -29,7 +28,6 @@ PRIMARY_SCHOOL_RUPTURES_RESULTS_PATH = Path(
 )
 PRIMARY_SCHOOL_SELECTED_PENALTY = 60.0
 
-SELECTED_LAMBDAS = np.logspace(-5, 0, 10)
 LAMBDAS_GROWING = np.logspace(-5, 0, 200)
 INTERVAL_CONFIGS = [
     ("full", "clustersplot"),
@@ -46,17 +44,20 @@ BEST_CLUSTER_INDICES = {
     "960_1320": 125,
     "1320_1556": 90,
 }
+SUMMARY_INTERVAL_LABEL = "960_1320"
+INTERVAL_FOLDERS = dict(INTERVAL_CONFIGS)
 TIME_LABELS = ["08:30", "10:30", "12:00", "14:00", "16:00"]
 TIME_LABEL_POSITIONS = [0.1, 0.3, 0.5, 0.7, 0.9]
 
 
+def load_cluster_result(folder_name, lamda):
+    path = CLUSTER_DIR / folder_name / f"cluster{lamda:.11f}"
+    with path.open("rb") as handle:
+        return pickle.load(handle)
+
+
 def load_cluster_results(folder_name, lambdas):
-    cluster_results = {}
-    for lamda in lambdas:
-        path = f"{CLUSTER_DIR}/{folder_name}/cluster{lamda:.11f}"
-        with open(path, "rb") as handle:
-            cluster_results[lamda] = pickle.load(handle)
-    return cluster_results
+    return {lamda: load_cluster_result(folder_name, lamda) for lamda in lambdas}
 
 
 def summarize_clusters(cluster_results, lambdas):
@@ -112,22 +113,23 @@ def offset_flow_columns(flow_frames):
 def build_sankey_nodes(flow_frames):
     nodes = []
     for frame in flow_frames:
+        source_totals = frame.groupby("source", sort=False)["value"].sum()
         nodes.append(
             [
-                (node, frame.loc[frame["source"] == node, "value"].sum(), {"color": "black"})
-                for node in frame["source"].unique()
+                (int(node), value, {"color": "black"})
+                for node, value in source_totals.items()
             ]
         )
 
-    last_frame = flow_frames[-1]
+    target_totals = flow_frames[-1].groupby("target_label", sort=False)["value"].sum()
     nodes.append(
         [
             (
-                node,
-                last_frame.loc[last_frame["target_label"] == node, "value"].sum(),
+                int(node),
+                value,
                 {"color": "black"},
             )
-            for node in last_frame["target_label"].unique()
+            for node, value in target_totals.items()
         ]
     )
     return nodes
@@ -172,52 +174,27 @@ net_rw = ContTempNetwork.load(
     attributes_list=[
         "node_to_label_dict",
         "events_table",
-        "times",
-        "time_grid",
-        "num_nodes",
-        "_overlapping_events_merged",
-        "start_date",
-        "node_label_array",
-        "male_array",
-        "female_array",
-        "node_first_start_array",
-        "node_last_end_array",
         "node_class_array",
-        "datetimes",
     ],
 )
 
-df = pd.read_csv(
-    CSV_PATH,
-    header=None,
-    sep="\t",
-    names=["time", "id1", "id2", "class1", "class2"],
+summary_cluster_results = load_cluster_results(
+    INTERVAL_FOLDERS[SUMMARY_INTERVAL_LABEL],
+    LAMBDAS_GROWING,
 )
-df["hour"] = df["time"] // 3600
-df["minute"] = (df["time"] % 3600) / 60
+nclusters_960_1320, nvi_960_1320 = summarize_clusters(
+    summary_cluster_results,
+    LAMBDAS_GROWING,
+)
 
-net_times_hours = net_rw.times / 3600
-flag10 = np.argmax(net_times_hours > 10)
-flag12 = np.argmax(net_times_hours > 12)
-flag14 = np.argmax(net_times_hours > 14)
-flag16 = np.argmax(net_times_hours > 16)
-flagday1 = np.argmax(net_times_hours > 18)
-print(flag10, flag12, flag14, flag16, flagday1)
-
-
-interval_results = {
-    label: load_cluster_results(folder_name, LAMBDAS_GROWING)
-    for label, folder_name in INTERVAL_CONFIGS
-}
-interval_summaries = {
-    label: summarize_clusters(cluster_results, LAMBDAS_GROWING)
-    for label, cluster_results in interval_results.items()
-}
-
-bestclusters = [
-    interval_results[label][LAMBDAS_GROWING[best_index]][0]
-    for label, best_index in BEST_CLUSTER_INDICES.items()
-]
+bestclusters = []
+for label, best_index in BEST_CLUSTER_INDICES.items():
+    lamda = LAMBDAS_GROWING[best_index]
+    if label == SUMMARY_INTERVAL_LABEL:
+        cluster_result = summary_cluster_results[lamda]
+    else:
+        cluster_result = load_cluster_result(INTERVAL_FOLDERS[label], lamda)
+    bestclusters.append(cluster_result[0])
 
 class_dict = build_class_dict(net_rw)
 flow_frames = [
@@ -236,7 +213,7 @@ primary_school_panel = load_primary_school_penalty_plot_data()
 ax_a.plot(
     primary_school_panel["t_hours"],
     primary_school_panel["signal"],
-    color="tab:blue",
+    color="black",
     alpha=0.75,
 )
 for cp_hour in primary_school_panel["change_point_hours"]:
@@ -262,7 +239,6 @@ ax_a.set_ylabel("Entropy")
 ax_a.set_title("(A) Local Conditional Entropy", loc="left", fontsize=12)
 
 ax_b = fig.add_subplot(gs[0, 1])
-nclusters_960_1320, nvi_960_1320 = interval_summaries["960_1320"]
 ax_b.plot(LAMBDAS_GROWING, nvi_960_1320, color="tab:red", label="static norm NVI")
 ax_b.set_xscale("log")
 ax_b.set_xlabel(r"$\lambda$ [s]")
@@ -282,9 +258,10 @@ ax_b_right.set_ylabel("Avg. no. clusters", color="tab:blue")
 ax_b_right.tick_params(axis="y", labelcolor="tab:blue")
 
 nodes = build_sankey_nodes(flow_frames)
+flow_types = df_flows["type"].unique()
 color_list = auxiliary_functions.generate_plasma_colors(11)
 dict_color = {
-    flow_type: color_list[i] for i, flow_type in enumerate(df_flows["type"].unique())
+    flow_type: color_list[i] for i, flow_type in enumerate(flow_types)
 }
 flows = [
     (
@@ -312,11 +289,11 @@ handles = [
         markerfacecolor=dict_color[flow_type],
         markersize=10,
     )
-    for flow_type in df_flows["type"].unique()
+    for flow_type in flow_types
 ]
 ax_c.legend(
     handles,
-    df_flows["type"].unique(),
+    flow_types,
     title="Group",
     loc="center left",
     bbox_to_anchor=(1, 0.5),
