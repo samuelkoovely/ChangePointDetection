@@ -1908,10 +1908,10 @@ class sparse_autocov_mat(object):
                                                        self.p1,
                                                        self.p2)
                 
-        else:    
-            return self._S.get_row_idx_sum(k,idx) \
-                        + self._S.get_col_idx_sum(k,idx) \
-                        + self._S.get_element(k,k)
+        else:
+            return self.get_row_idx_sum(k, idx) \
+                        + self.get_col_idx_sum(k, idx) \
+                        + self.get_element(k, k)
                         
     def _compute_delta_S_moveout(self, k, idx):
         
@@ -1946,10 +1946,10 @@ class sparse_autocov_mat(object):
                                                        self.p1,
                                                        self.p2)
                 
-        else:    
-            return - self._S.get_row_idx_sum(k,idx) \
-                        - self._S.get_col_idx_sum(k,idx) \
-                        + self._S.get_element(k,k)                  
+        else:
+            return - self.get_row_idx_sum(k, idx) \
+                        - self.get_col_idx_sum(k, idx) \
+                        + self.get_element(k, k)
                         
                         
 @timing     
