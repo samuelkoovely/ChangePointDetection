@@ -181,6 +181,20 @@ def offset_flow_columns(flow_frames):
     return adjusted_frames
 
 
+def add_sankey_node_labels(flow_frames):
+    labeled_frames = []
+    for level_index, frame in enumerate(flow_frames):
+        labeled_frame = frame.copy()
+        labeled_frame["source_label"] = labeled_frame["source"].map(
+            lambda value: f"L{level_index}_C{int(value)}"
+        )
+        labeled_frame["target_label"] = labeled_frame["target"].map(
+            lambda value: f"L{level_index + 1}_C{int(value)}"
+        )
+        labeled_frames.append(labeled_frame)
+    return labeled_frames
+
+
 def build_sankey_nodes(flow_frames):
     nodes = []
     for frame in flow_frames:
@@ -207,7 +221,9 @@ def build_sankey_nodes(flow_frames):
 
 
 def has_valid_sankey_flow_frames(flow_frames):
-    return bool(flow_frames) and all(not frame.empty for frame in flow_frames)
+    return bool(flow_frames) and all(
+        (not frame.empty) and (frame["value"].sum() > 0) for frame in flow_frames
+    )
 
 
 def load_primary_school_penalty_plot_data(
@@ -290,10 +306,12 @@ flow_frames = [
 ]
 sankey_ready = has_valid_sankey_flow_frames(flow_frames)
 if sankey_ready:
-    flow_frames = offset_flow_columns(flow_frames)
+    flow_frames = add_sankey_node_labels(flow_frames)
     df_flows = pd.concat(flow_frames, ignore_index=True)
 else:
-    df_flows = pd.DataFrame(columns=["source", "target", "type", "value", "target_label"])
+    df_flows = pd.DataFrame(
+        columns=["source", "target", "type", "value", "source_label", "target_label"]
+    )
 
 
 fig = plt.figure(figsize=(12, 4))
@@ -352,7 +370,6 @@ ax_b_right.tick_params(axis="y", labelcolor="tab:blue")
 
 ax_c = fig.add_subplot(gs[0, 2])
 if sankey_ready:
-    nodes = build_sankey_nodes(flow_frames)
     flow_types = df_flows["type"].unique()
     color_list = auxiliary_functions.generate_plasma_colors(len(flow_types))
     dict_color = {
@@ -360,39 +377,41 @@ if sankey_ready:
     }
     flows = [
         (
-            row.source,
+            row.source_label,
             row.target_label,
             row.value,
             {"color": dict_color[row.type]},
         )
         for row in df_flows.itertuples()
     ]
+    try:
+        sankey = Sankey(flows=flows, node_opts={"label_format": ""})
+        sankey.draw(ax_c)
 
-    sankey = Sankey(flows=flows, nodes=nodes, node_opts={"label_format": ""})
-    sankey.draw()
+        for x_pos, label in zip(TIME_LABEL_POSITIONS, TIME_LABELS):
+            ax_c.text(x_pos, -0.05, label, fontsize=10, ha="center", transform=ax_c.transAxes)
 
-    for x_pos, label in zip(TIME_LABEL_POSITIONS, TIME_LABELS):
-        ax_c.text(x_pos, -0.05, label, fontsize=10, ha="center", transform=ax_c.transAxes)
-
-    handles = [
-        plt.Line2D(
-            [0],
-            [0],
-            marker="o",
-            color="w",
-            markerfacecolor=dict_color[flow_type],
-            markersize=10,
+        handles = [
+            plt.Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=dict_color[flow_type],
+                markersize=10,
+            )
+            for flow_type in flow_types
+        ]
+        ax_c.legend(
+            handles,
+            flow_types,
+            title="Group",
+            loc="center left",
+            bbox_to_anchor=(1, 0.5),
         )
-        for flow_type in flow_types
-    ]
-    ax_c.legend(
-        handles,
-        flow_types,
-        title="Group",
-        loc="center left",
-        bbox_to_anchor=(1, 0.5),
-    )
-else:
+    except ZeroDivisionError:
+        sankey_ready = False
+if not sankey_ready:
     ax_c.text(
         0.5,
         0.5,
