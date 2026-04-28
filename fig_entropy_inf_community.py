@@ -255,22 +255,11 @@ if len(primary_school_panel["change_point_indices"]) > 0:
         s=14,
         zorder=3,
     )
-ax_a.text(
-    0.02,
-    0.98,
-    (
-        rf"$\lambda$ = {primary_school_panel['lamda']:.2e}, "
-        rf"window = {primary_school_panel['window_minutes']:g} min, "
-        rf"pen = {primary_school_panel['penalty']:g}"
-    ),
-    transform=ax_a.transAxes,
-    va="top",
-    fontsize=9,
-)
+
 ax_a.set_xlabel("Time (hours)")
 ax_a.set_ylabel("Entropy")
     
-ax_a.set_title("(A) Localized Conditional entropy", loc="left", fontsize=12)
+ax_a.set_title("(A) Local Conditional Entropy", loc="left", fontsize=12)
 
 ax_b = fig.add_subplot(gs[0, 1])
 nclusters_960_1320, nvi_960_1320 = interval_summaries["960_1320"]
