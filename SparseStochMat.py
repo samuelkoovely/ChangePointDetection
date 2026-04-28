@@ -1392,23 +1392,39 @@ class sparse_autocov_csr_mat(object):
                                                                         idxs_array,
                                                                         idxptr)                
         else:
-            # AtoB = {}
-            # for kb in range(new_size):
-            #     for ka in range(idxptr[kb],idxptr[kb+1]):
-            #         AtoB[idxs_array[ka]] = kb
-            
-            # Bdata = []
-            # Brows = []
-            # Bcols = []
-            # # loop over values of A
-            # for row in range(self.S.indptr.shape[0]-1):
-            #     for k in range(self.S.indptr[row],self.S.indptr[row+1]):
-            #         col = self.S.indices[k]
-        
-            #         Bdata.append(self.S.data[k])
-            #         Brows.append(AtoB[row])
-            #         Bcols.append(AtoB[col])
-            raise NotImplementedError
+            AtoB = {}
+            for kb in range(new_size):
+                for ka in range(idxptr[kb], idxptr[kb + 1]):
+                    AtoB[idxs_array[ka]] = kb
+
+            Sdata = []
+            Srows = []
+            Scols = []
+            for row in range(self.S.indptr.shape[0] - 1):
+                brow = AtoB[row]
+                for k in range(self.S.indptr[row], self.S.indptr[row + 1]):
+                    col = self.S.indices[k]
+                    Sdata.append(self.S.data[k])
+                    Srows.append(brow)
+                    Scols.append(AtoB[col])
+
+            PTdata = []
+            PTrows = []
+            PTcols = []
+            for row in range(self.PT.indptr.shape[0] - 1):
+                brow = AtoB[row]
+                for k in range(self.PT.indptr[row], self.PT.indptr[row + 1]):
+                    col = self.PT.indices[k]
+                    PTdata.append(self.PT.data[k])
+                    PTrows.append(brow)
+                    PTcols.append(AtoB[col])
+
+            Sdata = np.asarray(Sdata, dtype=self.S.data.dtype)
+            Srows = np.asarray(Srows, dtype=np.int32)
+            Scols = np.asarray(Scols, dtype=np.int32)
+            PTdata = np.asarray(PTdata, dtype=self.PT.data.dtype)
+            PTrows = np.asarray(PTrows, dtype=np.int32)
+            PTcols = np.asarray(PTcols, dtype=np.int32)
             
         newPT = coo_matrix((PTdata,(PTrows,PTcols)), shape=(new_size,new_size)) 
         newS = coo_matrix((Sdata,(Srows,Scols)), shape=(new_size,new_size)) 
@@ -1825,12 +1841,17 @@ class sparse_autocov_mat(object):
             Bcols = []
             # loop over values of A
             for row in range(self.PT.indptr.shape[0]-1):
+                brow = AtoB[row]
                 for k in range(self.PT.indptr[row],self.PT.indptr[row+1]):
                     col = self.PT.indices[k]
         
                     Bdata.append(self.PT.data[k])
-                    Brows.append(AtoB[row])
+                    Brows.append(brow)
                     Bcols.append(AtoB[col])
+
+            PTdata = np.asarray(Bdata, dtype=self.PT.data.dtype)
+            PTrows = np.asarray(Brows, dtype=np.int32)
+            PTcols = np.asarray(Bcols, dtype=np.int32)
             
         newPT = coo_matrix((PTdata,(PTrows,PTcols)), shape=(new_size,new_size)) 
         
