@@ -116,22 +116,53 @@ def build_class_dict(net):
     }
 
 
-def build_flow_dataframe(source_comms, target_comms, class_dict):
-    flows = []
+def build_node_to_cluster_dict(comms):
+    node_to_cluster = {}
+    for cluster_idx, community in enumerate(comms):
+        for node in community:
+            node_to_cluster[int(node)] = cluster_idx
+    return node_to_cluster
+
+
+def build_node_class_lookup(class_dict):
+    node_to_class = {}
     for school_class, class_nodes in class_dict.items():
-        for source_idx, source_comm in enumerate(source_comms):
-            for target_idx, target_comm in enumerate(target_comms):
-                value = len(class_nodes.intersection(source_comm).intersection(target_comm))
-                if value > 0:
-                    flows.append(
-                        {
-                            "source": source_idx,
-                            "target": target_idx,
-                            "type": school_class,
-                            "value": value,
-                        }
-                    )
-    return pd.DataFrame(flows)
+        for node in class_nodes:
+            node_to_class[int(node)] = school_class
+    return node_to_class
+
+
+def build_flow_dataframe(source_comms, target_comms, class_dict):
+    source_node_to_cluster = build_node_to_cluster_dict(source_comms)
+    target_node_to_cluster = build_node_to_cluster_dict(target_comms)
+    node_to_class = build_node_class_lookup(class_dict)
+
+    flow_counts = {}
+    shared_nodes = sorted(
+        set(source_node_to_cluster).intersection(target_node_to_cluster)
+    )
+    for node in shared_nodes:
+        school_class = node_to_class.get(node)
+        if school_class is None:
+            continue
+        key = (
+            int(source_node_to_cluster[node]),
+            int(target_node_to_cluster[node]),
+            school_class,
+        )
+        flow_counts[key] = flow_counts.get(key, 0) + 1
+
+    flows = [
+        {
+            "source": source_idx,
+            "target": target_idx,
+            "type": school_class,
+            "value": value,
+        }
+        for (source_idx, target_idx, school_class), value in sorted(flow_counts.items())
+        if value > 0
+    ]
+    return pd.DataFrame(flows, columns=["source", "target", "type", "value"])
 
 
 def offset_flow_columns(flow_frames):
@@ -173,6 +204,10 @@ def build_sankey_nodes(flow_frames):
         ]
     )
     return nodes
+
+
+def has_valid_sankey_flow_frames(flow_frames):
+    return bool(flow_frames) and all(not frame.empty for frame in flow_frames)
 
 
 def load_primary_school_penalty_plot_data(
@@ -253,8 +288,12 @@ flow_frames = [
     build_flow_dataframe(source_comms, target_comms, class_dict)
     for source_comms, target_comms in zip(bestclusters[:-1], bestclusters[1:])
 ]
-flow_frames = offset_flow_columns(flow_frames)
-df_flows = pd.concat(flow_frames, ignore_index=True)
+sankey_ready = has_valid_sankey_flow_frames(flow_frames)
+if sankey_ready:
+    flow_frames = offset_flow_columns(flow_frames)
+    df_flows = pd.concat(flow_frames, ignore_index=True)
+else:
+    df_flows = pd.DataFrame(columns=["source", "target", "type", "value", "target_label"])
 
 
 fig = plt.figure(figsize=(12, 4))
@@ -306,57 +345,63 @@ ax_b.set_title(
 )
 
 ax_b_right = ax_b.twinx()
-ax_b_right.plot(
-    summary_lambdas,
-    summary_avg_num_clusters,
-    color="tab:blue",
-    label="edge-centric",
-)
+ax_b_right.plot(summary_lambdas, summary_avg_num_clusters, color="tab:blue")
 ax_b_right.set_xlabel(r"$\lambda$ [s]")
 ax_b_right.set_ylabel("Avg. no. clusters", color="tab:blue")
 ax_b_right.tick_params(axis="y", labelcolor="tab:blue")
 
-nodes = build_sankey_nodes(flow_frames)
-flow_types = df_flows["type"].unique()
-color_list = auxiliary_functions.generate_plasma_colors(len(flow_types))
-dict_color = {
-    flow_type: color_list[i] for i, flow_type in enumerate(flow_types)
-}
-flows = [
-    (
-        row.source,
-        row.target_label,
-        row.value,
-        {"color": dict_color[row.type]},
-    )
-    for row in df_flows.itertuples()
-]
-
 ax_c = fig.add_subplot(gs[0, 2])
-sankey = Sankey(flows=flows, nodes=nodes, node_opts={"label_format": ""})
-sankey.draw()
+if sankey_ready:
+    nodes = build_sankey_nodes(flow_frames)
+    flow_types = df_flows["type"].unique()
+    color_list = auxiliary_functions.generate_plasma_colors(len(flow_types))
+    dict_color = {
+        flow_type: color_list[i] for i, flow_type in enumerate(flow_types)
+    }
+    flows = [
+        (
+            row.source,
+            row.target_label,
+            row.value,
+            {"color": dict_color[row.type]},
+        )
+        for row in df_flows.itertuples()
+    ]
 
-for x_pos, label in zip(TIME_LABEL_POSITIONS, TIME_LABELS):
-    ax_c.text(x_pos, -0.05, label, fontsize=10, ha="center", transform=ax_c.transAxes)
+    sankey = Sankey(flows=flows, nodes=nodes, node_opts={"label_format": ""})
+    sankey.draw()
 
-handles = [
-    plt.Line2D(
-        [0],
-        [0],
-        marker="o",
-        color="w",
-        markerfacecolor=dict_color[flow_type],
-        markersize=10,
+    for x_pos, label in zip(TIME_LABEL_POSITIONS, TIME_LABELS):
+        ax_c.text(x_pos, -0.05, label, fontsize=10, ha="center", transform=ax_c.transAxes)
+
+    handles = [
+        plt.Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor=dict_color[flow_type],
+            markersize=10,
+        )
+        for flow_type in flow_types
+    ]
+    ax_c.legend(
+        handles,
+        flow_types,
+        title="Group",
+        loc="center left",
+        bbox_to_anchor=(1, 0.5),
     )
-    for flow_type in flow_types
-]
-ax_c.legend(
-    handles,
-    flow_types,
-    title="Group",
-    loc="center left",
-    bbox_to_anchor=(1, 0.5),
-)
+else:
+    ax_c.text(
+        0.5,
+        0.5,
+        "No non-empty\ncommunity overlaps\nwere found across\nadjacent intervals.",
+        ha="center",
+        va="center",
+        fontsize=11,
+        transform=ax_c.transAxes,
+    )
 ax_c.set_title(
     "(C) Community Evolution - Primary School - Day 1",
     loc="left",
