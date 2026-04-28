@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 
 import auxiliary_functions
-from FlowStability import avg_norm_var_information
 from TemporalNetwork import ContTempNetwork
 from sankeyflow import Sankey
 
@@ -16,7 +15,9 @@ START_TIME = time.perf_counter()
 
 
 OUTPUT_PATH = Path("figures/fig_entropy_inf_community.pdf")
-CLUSTER_DIR = Path("//scratch/tmp/180/skoove/primaryschoolnet_rw")
+CLUSTER_DIR = Path(
+    "//scratch/tmp/180/skoove/primaryschoolnet_heat/primaryschool_day1_flow_clustering"
+)
 NETWORK_PATH = (
     "data/primaryschoolnet"
 )
@@ -28,26 +29,7 @@ PRIMARY_SCHOOL_RUPTURES_RESULTS_PATH = Path(
 )
 PRIMARY_SCHOOL_SELECTED_PENALTY = 60.0
 
-LAMBDAS_GROWING = np.logspace(-5, 0, 200)
-INTERVAL_CONFIGS = [
-    ("full", "clustersplot"),
-    ("0_240", "clustersplot0_240"),
-    ("240_600", "clustersplot240_600"),
-    ("600_960", "clustersplot600_960"),
-    ("960_1320", "clustersplot960_1320"),
-    ("1320_1556", "clustersplot1320_1556"),
-]
-BEST_CLUSTER_INDICES = {
-    "0_240": 170,
-    "240_600": 135,
-    "600_960": 180,
-    "960_1320": 125,
-    "1320_1556": 90,
-}
 SUMMARY_INTERVAL_LABEL = "960_1320"
-INTERVAL_FOLDERS = dict(INTERVAL_CONFIGS)
-TIME_LABELS = ["08:30", "10:30", "12:00", "14:00", "16:00"]
-TIME_LABEL_POSITIONS = [0.1, 0.3, 0.5, 0.7, 0.9]
 
 
 def load_cluster_result(folder_name, lamda):
@@ -57,16 +39,74 @@ def load_cluster_result(folder_name, lamda):
 
 
 def load_cluster_results(folder_name, lambdas):
-    return {lamda: load_cluster_result(folder_name, lamda) for lamda in lambdas}
+    results = {}
+    for lamda in np.asarray(lambdas, dtype=float):
+        path = CLUSTER_DIR / folder_name / f"cluster{float(lamda):.11f}"
+        if not path.exists():
+            continue
+        results[float(lamda)] = load_cluster_result(folder_name, float(lamda))
+    if not results:
+        raise FileNotFoundError(
+            f"Could not find any clustering outputs under {CLUSTER_DIR / folder_name}."
+        )
+    return results
 
 
-def summarize_clusters(cluster_results, lambdas):
-    avg_cluster_sizes = [
-        np.mean([len(cluster) for cluster in cluster_results[lamda] if len(cluster) > 1])
-        for lamda in lambdas
+def summarize_clusters(cluster_results):
+    sorted_lambdas = np.array(sorted(cluster_results), dtype=float)
+    avg_num_clusters = np.array(
+        [cluster_results[lamda]["avg_num_clusters"] for lamda in sorted_lambdas],
+        dtype=float,
+    )
+    nvi_values = np.array(
+        [cluster_results[lamda]["avg_nvi"] for lamda in sorted_lambdas],
+        dtype=float,
+    )
+    return sorted_lambdas, avg_num_clusters, nvi_values
+
+
+def load_clustering_metadata():
+    metadata_path = CLUSTER_DIR / "metadata.pkl"
+    with metadata_path.open("rb") as handle:
+        return pickle.load(handle)
+
+
+def get_interval_map(metadata):
+    intervals = sorted(
+        metadata["intervals"],
+        key=lambda interval: (int(interval["start"]), int(interval["stop"])),
+    )
+    return {str(interval["label"]): interval for interval in intervals}
+
+
+def resolve_summary_interval(interval_map):
+    if SUMMARY_INTERVAL_LABEL in interval_map:
+        return interval_map[SUMMARY_INTERVAL_LABEL]
+    non_full_intervals = [
+        interval for interval in interval_map.values() if str(interval["label"]) != "full"
     ]
-    nvi_values = [avg_norm_var_information(cluster_results[lamda]) for lamda in lambdas]
-    return avg_cluster_sizes, nvi_values
+    if not non_full_intervals:
+        raise ValueError("No non-full intervals found in clustering metadata.")
+    return non_full_intervals[-1]
+
+
+def select_best_interval_result(cluster_results):
+    return max(
+        cluster_results.values(),
+        key=lambda result: (float(result["best_stability"]), -float(result["lamda"])),
+    )
+
+
+def format_hour_label(hour_value):
+    total_minutes = int(round(float(hour_value) * 60.0))
+    hours, minutes = divmod(total_minutes, 60)
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def build_time_labels(intervals):
+    labels = [format_hour_label(interval["start_hour"]) for interval in intervals]
+    positions = np.linspace(0.1, 0.9, len(labels))
+    return labels, positions
 
 
 def build_class_dict(net):
@@ -169,6 +209,36 @@ def load_primary_school_penalty_plot_data(
 
     raise ValueError(f"Could not find penalty={penalty} in {results_path}.")
 
+
+clustering_metadata = load_clustering_metadata()
+interval_map = get_interval_map(clustering_metadata)
+summary_interval = resolve_summary_interval(interval_map)
+summary_cluster_results = load_cluster_results(
+    summary_interval["folder_name"],
+    clustering_metadata["lambdas"],
+)
+summary_lambdas, summary_avg_num_clusters, summary_avg_nvi = summarize_clusters(
+    summary_cluster_results
+)
+
+panel_c_intervals = [
+    interval
+    for interval in sorted(
+        interval_map.values(),
+        key=lambda interval: (int(interval["start"]), int(interval["stop"])),
+    )
+    if str(interval["label"]) != "full"
+]
+bestclusters = []
+for interval in panel_c_intervals:
+    cluster_results = load_cluster_results(
+        interval["folder_name"],
+        clustering_metadata["lambdas"],
+    )
+    bestclusters.append(select_best_interval_result(cluster_results)["best_cluster"])
+
+TIME_LABELS, TIME_LABEL_POSITIONS = build_time_labels(panel_c_intervals)
+
 net_rw = ContTempNetwork.load(
     NETWORK_PATH,
     attributes_list=[
@@ -177,24 +247,6 @@ net_rw = ContTempNetwork.load(
         "node_class_array",
     ],
 )
-
-summary_cluster_results = load_cluster_results(
-    INTERVAL_FOLDERS[SUMMARY_INTERVAL_LABEL],
-    LAMBDAS_GROWING,
-)
-nclusters_960_1320, nvi_960_1320 = summarize_clusters(
-    summary_cluster_results,
-    LAMBDAS_GROWING,
-)
-
-bestclusters = []
-for label, best_index in BEST_CLUSTER_INDICES.items():
-    lamda = LAMBDAS_GROWING[best_index]
-    if label == SUMMARY_INTERVAL_LABEL:
-        cluster_result = summary_cluster_results[lamda]
-    else:
-        cluster_result = load_cluster_result(INTERVAL_FOLDERS[label], lamda)
-    bestclusters.append(cluster_result[0])
 
 class_dict = build_class_dict(net_rw)
 flow_frames = [
@@ -239,17 +291,24 @@ ax_a.set_ylabel("Entropy")
 ax_a.set_title("(A) Local Conditional Entropy", loc="left", fontsize=12)
 
 ax_b = fig.add_subplot(gs[0, 1])
-ax_b.plot(LAMBDAS_GROWING, nvi_960_1320, color="tab:red", label="static norm NVI")
+ax_b.plot(summary_lambdas, summary_avg_nvi, color="tab:red", label="static norm NVI")
 ax_b.set_xscale("log")
 ax_b.set_xlabel(r"$\lambda$ [s]")
 ax_b.set_ylabel("Avg. Norm. Var. Inf.", color="tab:red")
 ax_b.tick_params(axis="y", labelcolor="tab:red")
-ax_b.set_title("(B) Flow Stability - Sub-Interval", loc="left", fontsize=12)
+ax_b.set_title(
+    (
+        f"(B) Flow Stability - {format_hour_label(summary_interval['start_hour'])} "
+        f"to {format_hour_label(summary_interval['stop_hour'])}"
+    ),
+    loc="left",
+    fontsize=12,
+)
 
 ax_b_right = ax_b.twinx()
 ax_b_right.plot(
-    LAMBDAS_GROWING,
-    nclusters_960_1320,
+    summary_lambdas,
+    summary_avg_num_clusters,
     color="tab:blue",
     label="edge-centric",
 )
@@ -259,7 +318,7 @@ ax_b_right.tick_params(axis="y", labelcolor="tab:blue")
 
 nodes = build_sankey_nodes(flow_frames)
 flow_types = df_flows["type"].unique()
-color_list = auxiliary_functions.generate_plasma_colors(11)
+color_list = auxiliary_functions.generate_plasma_colors(len(flow_types))
 dict_color = {
     flow_type: color_list[i] for i, flow_type in enumerate(flow_types)
 }
@@ -298,7 +357,11 @@ ax_c.legend(
     loc="center left",
     bbox_to_anchor=(1, 0.5),
 )
-ax_c.set_title("(C) Community Evolution - Primary School - Day 1", loc="left", fontsize=12)
+ax_c.set_title(
+    "(C) Community Evolution - Primary School - Day 1",
+    loc="left",
+    fontsize=12,
+)
 ax_c.set_yticks([])
 ax_c.set_frame_on(False)
 
