@@ -1303,7 +1303,7 @@ class sparse_autocov_csr_mat(object):
                                           np.array(idx, dtype=np.int32))
         else:
             PTrow = self.PT._major_index_fancy(row)
-            PTsum = PTrow.data[np.in1d(PTrow.indices,idx)].sum()
+            PTsum = PTrow.data[np.isin(PTrow.indices, idx)].sum()
             
         return  PTsum
     
@@ -1332,7 +1332,7 @@ class sparse_autocov_csr_mat(object):
                                           np.array(idx, dtype=np.int32))
         else:
             PTcol = self.Scsc._major_index_fancy(col)
-            PTsum = PTcol.data[np.in1d(PTcol.indices,idx)].sum()
+            PTsum = PTcol.data[np.isin(PTcol.indices, idx)].sum()
             
         return  PTsum     
 
@@ -1734,7 +1734,7 @@ class sparse_autocov_mat(object):
                                           np.array(idx, dtype=np.int32))
         else:
             PTrow = self.PT._major_index_fancy(row)
-            PTsum = PTrow.data[np.in1d(PTrow.indices,idx)].sum()
+            PTsum = PTrow.data[np.isin(PTrow.indices, idx)].sum()
             
         return  PTsum - p0
     
@@ -1768,7 +1768,7 @@ class sparse_autocov_mat(object):
                                           np.array(idx, dtype=np.int32))
         else:
             PTcol = self.PTcsc._major_index_fancy(col)
-            PTsum = PTcol.data[np.in1d(PTcol.indices,idx)].sum()
+            PTsum = PTcol.data[np.isin(PTcol.indices, idx)].sum()
             
         return  PTsum - p0            
 
