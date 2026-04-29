@@ -28,6 +28,9 @@ PRIMARY_SCHOOL_RUPTURES_RESULTS_PATH = Path(
     "gridsearch_results/primaryschool_day1_ruptures/forward/window_3600/lamda_1.00000000000/ruptures_results.pkl"
 )
 PRIMARY_SCHOOL_SELECTED_PENALTY = 60.0
+PANEL_C_SELECTED_LAMBDAS_PATH = Path(
+    "gridsearch_results/primaryschool_day1/panel_c_selected_lambdas.csv"
+)
 
 SUMMARY_INTERVAL_LABEL = "960_1320"
 
@@ -95,6 +98,81 @@ def select_best_interval_result(cluster_results):
         cluster_results.values(),
         key=lambda result: (float(result["best_stability"]), -float(result["lamda"])),
     )
+
+
+def find_matching_lambda(available_lambdas, requested_lambda):
+    for lamda in available_lambdas:
+        if np.isclose(float(lamda), float(requested_lambda)):
+            return float(lamda)
+    raise ValueError(
+        f"Could not match selected lambda={requested_lambda} "
+        f"against available lambdas: {sorted(float(lamda) for lamda in available_lambdas)}"
+    )
+
+
+def load_panel_c_selected_lambdas(
+    selection_path: Path = PANEL_C_SELECTED_LAMBDAS_PATH,
+):
+    if not selection_path.exists():
+        return None
+
+    selections = pd.read_csv(selection_path)
+    required_columns = {"interval_label", "selected_lambda"}
+    missing_columns = required_columns.difference(selections.columns)
+    if missing_columns:
+        raise ValueError(
+            f"{selection_path} is missing required columns: {sorted(missing_columns)}"
+        )
+
+    duplicated_labels = selections["interval_label"][
+        selections["interval_label"].duplicated()
+    ]
+    if not duplicated_labels.empty:
+        raise ValueError(
+            f"{selection_path} contains duplicated interval labels: "
+            f"{sorted(duplicated_labels.unique())}"
+        )
+
+    return {
+        str(row.interval_label): float(row.selected_lambda)
+        for row in selections.itertuples()
+    }
+
+
+def resolve_panel_c_cluster_selection(
+    panel_c_intervals,
+    metadata,
+    selected_lambdas=None,
+):
+    bestclusters = []
+    resolved_lambdas = {}
+    available_lambdas = metadata["lambdas"]
+
+    for interval in panel_c_intervals:
+        cluster_results = load_cluster_results(
+            interval["folder_name"],
+            available_lambdas,
+        )
+        interval_label = str(interval["label"])
+
+        if selected_lambdas is None:
+            selected_result = select_best_interval_result(cluster_results)
+        else:
+            if interval_label not in selected_lambdas:
+                raise ValueError(
+                    f"Missing panel-C lambda selection for interval {interval_label} "
+                    f"in {PANEL_C_SELECTED_LAMBDAS_PATH}."
+                )
+            matched_lambda = find_matching_lambda(
+                cluster_results,
+                selected_lambdas[interval_label],
+            )
+            selected_result = cluster_results[matched_lambda]
+
+        resolved_lambdas[interval_label] = float(selected_result["lamda"])
+        bestclusters.append(selected_result["best_cluster"])
+
+    return bestclusters, resolved_lambdas
 
 
 def format_hour_label(hour_value):
@@ -280,13 +358,12 @@ panel_c_intervals = [
     )
     if str(interval["label"]) != "full"
 ]
-bestclusters = []
-for interval in panel_c_intervals:
-    cluster_results = load_cluster_results(
-        interval["folder_name"],
-        clustering_metadata["lambdas"],
-    )
-    bestclusters.append(select_best_interval_result(cluster_results)["best_cluster"])
+panel_c_selected_lambdas = load_panel_c_selected_lambdas()
+bestclusters, resolved_panel_c_lambdas = resolve_panel_c_cluster_selection(
+    panel_c_intervals=panel_c_intervals,
+    metadata=clustering_metadata,
+    selected_lambdas=panel_c_selected_lambdas,
+)
 
 TIME_LABELS, TIME_LABEL_POSITIONS = build_time_labels(panel_c_intervals)
 
@@ -349,6 +426,15 @@ ax_a.set_title("(A) Local Conditional Entropy", loc="left", fontsize=12)
 
 ax_b = fig.add_subplot(gs[0, 1])
 ax_b.plot(summary_lambdas, summary_avg_nvi, color="tab:red", label="static norm NVI")
+summary_interval_label = str(summary_interval["label"])
+if summary_interval_label in resolved_panel_c_lambdas:
+    ax_b.axvline(
+        resolved_panel_c_lambdas[summary_interval_label],
+        color="black",
+        linestyle=":",
+        linewidth=1.0,
+        alpha=0.8,
+    )
 ax_b.set_xscale("log")
 ax_b.set_xlabel(r"$\lambda$ [s]")
 ax_b.set_ylabel("Avg. Norm. Var. Inf.", color="tab:red")
