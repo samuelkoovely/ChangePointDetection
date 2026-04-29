@@ -1,4 +1,5 @@
 import pickle
+import re
 import time
 from pathlib import Path
 
@@ -187,6 +188,26 @@ def build_time_labels(intervals):
     return labels, positions
 
 
+def school_class_sort_key(school_class):
+    school_class_str = str(school_class)
+    normalized = school_class_str.strip()
+    if "teacher" in normalized.lower():
+        return (float("inf"), "ZZZ", normalized)
+
+    match = re.fullmatch(r"(\d+)\s*([A-Za-z]+)", normalized)
+    if match is not None:
+        grade = int(match.group(1))
+        section = match.group(2).upper()
+        return (grade, section, normalized)
+
+    return (float("inf"), normalized.upper(), normalized)
+
+
+def get_ordered_flow_types(flow_values):
+    unique_flow_types = {str(flow_type) for flow_type in flow_values}
+    return sorted(unique_flow_types, key=school_class_sort_key)
+
+
 def build_class_dict(net):
     return {
         school_class: set(net.node_array[net.node_class_array == school_class])
@@ -276,10 +297,10 @@ def add_sankey_node_labels(flow_frames):
 def build_sankey_nodes(flow_frames):
     nodes = []
     for frame in flow_frames:
-        source_totals = frame.groupby("source", sort=False)["value"].sum()
+        source_totals = frame.groupby("source_label", sort=False)["value"].sum()
         nodes.append(
             [
-                (int(node), value, {"color": "black"})
+                (node, value, {"color": "black"})
                 for node, value in source_totals.items()
             ]
         )
@@ -288,7 +309,7 @@ def build_sankey_nodes(flow_frames):
     nodes.append(
         [
             (
-                int(node),
+                node,
                 value,
                 {"color": "black"},
             )
@@ -456,7 +477,8 @@ ax_b_right.tick_params(axis="y", labelcolor="tab:blue")
 
 ax_c = fig.add_subplot(gs[0, 2])
 if sankey_ready:
-    flow_types = df_flows["type"].unique()
+    nodes = build_sankey_nodes(flow_frames)
+    flow_types = get_ordered_flow_types(df_flows["type"])
     color_list = auxiliary_functions.generate_plasma_colors(len(flow_types))
     dict_color = {
         flow_type: color_list[i] for i, flow_type in enumerate(flow_types)
@@ -466,12 +488,16 @@ if sankey_ready:
             row.source_label,
             row.target_label,
             row.value,
-            {"color": dict_color[row.type]},
+            {"color": dict_color[str(row.type)]},
         )
         for row in df_flows.itertuples()
     ]
     try:
-        sankey = Sankey(flows=flows, node_opts={"label_format": ""})
+        sankey = Sankey(
+            flows=flows,
+            nodes=nodes,
+            node_opts={"label_format": "", "color": "black"},
+        )
         sankey.draw(ax_c)
 
         for x_pos, label in zip(TIME_LABEL_POSITIONS, TIME_LABELS):
