@@ -29,12 +29,8 @@ def main(output_path: Path = OUTPUT_PATH):
     plot_community_evolution_panel(
         ax_c,
         clustering_context,
-        title="(B)",
-    )
-    ax_c.set_title(
-        "Community Evolution - Primary School - Day 1",
-        loc="center",
-        fontsize=12,
+        title="(B) Community Evolution - Primary School - Day 1",
+        title_loc="center",
     )
 
     plt.tight_layout()

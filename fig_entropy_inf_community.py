@@ -188,7 +188,10 @@ def format_hour_label(hour_value):
 
 
 def build_time_labels(intervals):
-    labels = [format_hour_label(interval["start_hour"]) for interval in intervals]
+    labels = [
+        f"{format_hour_label(interval['start_hour'])}-\n{format_hour_label(interval['stop_hour'])}"
+        for interval in intervals
+    ]
     if len(labels) <= 1:
         positions = np.array([0.5], dtype=float)
     else:
@@ -574,6 +577,7 @@ def plot_community_evolution_panel(
     ax,
     clustering_context,
     title="(C) Community Evolution - Primary School - Day 1",
+    title_loc="left",
 ):
     if clustering_context is not None and clustering_context["sankey_ready"] and Sankey is not None:
         flow_frames = clustering_context["flow_frames"]
@@ -620,7 +624,7 @@ def plot_community_evolution_panel(
             for x_pos, label in zip(time_label_positions, time_labels):
                 ax.text(
                     x_pos,
-                    -0.05,
+                    -0.07,
                     label,
                     fontsize=10,
                     ha="center",
@@ -679,7 +683,7 @@ def plot_community_evolution_panel(
             fontsize=11,
             transform=ax.transAxes,
         )
-    ax.set_title(title, loc="left", fontsize=12)
+    ax.set_title(title, loc=title_loc, fontsize=12)
     ax.set_yticks([])
     ax.set_frame_on(False)
 
