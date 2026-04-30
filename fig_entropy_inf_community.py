@@ -429,79 +429,76 @@ def load_clustering_panels_context():
         return None
 
 
-clustering_context = load_clustering_panels_context()
+def plot_primary_school_panel(ax, primary_school_panel=None):
+    if primary_school_panel is None:
+        primary_school_panel = load_primary_school_penalty_plot_data()
 
-
-fig = plt.figure(figsize=(12, 4))
-gs = fig.add_gridspec(1, 3)
-
-ax_a = fig.add_subplot(gs[0, 0])
-primary_school_panel = load_primary_school_penalty_plot_data()
-ax_a.plot(
-    primary_school_panel["t_hours"],
-    primary_school_panel["signal"],
-    color="black",
-    alpha=0.75,
-)
-for cp_hour in primary_school_panel["change_point_hours"]:
-    ax_a.axvline(
-        cp_hour,
-        color="red",
-        linestyle="--",
-        linewidth=1.1,
-        alpha=0.9,
+    ax.plot(
+        primary_school_panel["t_hours"],
+        primary_school_panel["signal"],
+        color="black",
+        alpha=0.75,
     )
-if len(primary_school_panel["change_point_indices"]) > 0:
-    ax_a.scatter(
-        primary_school_panel["change_point_hours"],
-        primary_school_panel["signal"][primary_school_panel["change_point_indices"]],
-        color="red",
-        s=14,
-        zorder=3,
-    )
+    for cp_hour in primary_school_panel["change_point_hours"]:
+        ax.axvline(
+            cp_hour,
+            color="red",
+            linestyle="--",
+            linewidth=1.1,
+            alpha=0.9,
+        )
+    if len(primary_school_panel["change_point_indices"]) > 0:
+        ax.scatter(
+            primary_school_panel["change_point_hours"],
+            primary_school_panel["signal"][primary_school_panel["change_point_indices"]],
+            color="red",
+            s=14,
+            zorder=3,
+        )
 
-ax_a.set_xlabel("Time (hours)")
-ax_a.set_ylabel("Entropy")
-    
-ax_a.set_title("(A) Local Conditional Entropy", loc="left", fontsize=12)
+    ax.set_xlabel("Time (hours)")
+    ax.set_ylabel("Entropy")
+    ax.set_title("(A) Local Conditional Entropy", loc="left", fontsize=12)
 
-ax_b = fig.add_subplot(gs[0, 1])
-if clustering_context is None:
-    ax_b.text(
-        0.5,
-        0.5,
-        "Missing flow-clustering\noutputs under\n`primaryschool_day1_flow_clustering`.",
-        ha="center",
-        va="center",
-        fontsize=11,
-        transform=ax_b.transAxes,
-    )
-    ax_b.set_title("(B) Flow Stability", loc="left", fontsize=12)
-    ax_b.set_xticks([])
-    ax_b.set_yticks([])
-    ax_b.set_frame_on(False)
-else:
+
+def plot_flow_stability_panel(ax, clustering_context):
+    if clustering_context is None:
+        ax.text(
+            0.5,
+            0.5,
+            "Missing flow-clustering\noutputs under\n`primaryschool_day1_flow_clustering`.",
+            ha="center",
+            va="center",
+            fontsize=11,
+            transform=ax.transAxes,
+        )
+        ax.set_title("(B) Flow Stability", loc="left", fontsize=12)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_frame_on(False)
+        return
+
     summary_interval = clustering_context["summary_interval"]
     summary_lambdas = clustering_context["summary_lambdas"]
     summary_avg_num_clusters = clustering_context["summary_avg_num_clusters"]
     summary_avg_nvi = clustering_context["summary_avg_nvi"]
     resolved_panel_c_lambdas = clustering_context["resolved_panel_c_lambdas"]
 
-    ax_b.plot(summary_lambdas, summary_avg_nvi, color="tab:red", label="static norm NVI")
+    ax.plot(summary_lambdas, summary_avg_nvi, color="tab:red", label="static norm NVI")
     summary_interval_label = str(summary_interval["label"])
     if summary_interval_label in resolved_panel_c_lambdas:
-        ax_b.axvline(
+        ax.axvline(
             resolved_panel_c_lambdas[summary_interval_label],
             color="black",
             linestyle=":",
             linewidth=1.0,
             alpha=0.8,
         )
-    ax_b.set_xscale("log")
-    ax_b.set_xlabel(r"$\lambda$ [s]")
-    ax_b.set_ylabel("Avg. Norm. Var. Inf.", color="tab:red")
-    ax_b.tick_params(axis="y", labelcolor="tab:red")
-    ax_b.set_title(
+    ax.set_xscale("log")
+    ax.set_xlabel(r"$\lambda$ [s]")
+    ax.set_ylabel("Avg. Norm. Var. Inf.", color="tab:red")
+    ax.tick_params(axis="y", labelcolor="tab:red")
+    ax.set_title(
         (
             f"(B) Flow Stability - {format_hour_label(summary_interval['start_hour'])} "
             f"to {format_hour_label(summary_interval['stop_hour'])}"
@@ -510,103 +507,125 @@ else:
         fontsize=12,
     )
 
-    ax_b_right = ax_b.twinx()
-    ax_b_right.plot(summary_lambdas, summary_avg_num_clusters, color="tab:blue")
-    ax_b_right.set_xlabel(r"$\lambda$ [s]")
-    ax_b_right.set_ylabel("Avg. no. clusters", color="tab:blue")
-    ax_b_right.tick_params(axis="y", labelcolor="tab:blue")
+    ax_right = ax.twinx()
+    ax_right.plot(summary_lambdas, summary_avg_num_clusters, color="tab:blue")
+    ax_right.set_xlabel(r"$\lambda$ [s]")
+    ax_right.set_ylabel("Avg. no. clusters", color="tab:blue")
+    ax_right.tick_params(axis="y", labelcolor="tab:blue")
 
-ax_c = fig.add_subplot(gs[0, 2])
-if clustering_context is not None and clustering_context["sankey_ready"] and Sankey is not None:
-    flow_frames = clustering_context["flow_frames"]
-    df_flows = clustering_context["df_flows"]
-    time_labels = clustering_context["time_labels"]
-    time_label_positions = clustering_context["time_label_positions"]
-    nodes = build_sankey_nodes(flow_frames)
-    flow_types = get_ordered_flow_types(df_flows["type"])
-    color_list = auxiliary_functions.generate_plasma_colors(len(flow_types))
-    dict_color = {
-        flow_type: color_list[i] for i, flow_type in enumerate(flow_types)
-    }
-    flows = [
-        (
-            row.source_label,
-            row.target_label,
-            row.value,
-            {"color": dict_color[str(row.type)]},
-        )
-        for row in df_flows.itertuples()
-    ]
-    try:
-        sankey = Sankey(
-            flows=flows,
-            nodes=nodes,
-            node_opts={"label_format": "", "color": "black"},
-        )
-        sankey.draw(ax_c)
 
-        for x_pos, label in zip(time_label_positions, time_labels):
-            ax_c.text(x_pos, -0.05, label, fontsize=10, ha="center", transform=ax_c.transAxes)
-
-        handles = [
-            plt.Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="w",
-                markerfacecolor=dict_color[flow_type],
-                markersize=10,
+def plot_community_evolution_panel(ax, clustering_context):
+    if clustering_context is not None and clustering_context["sankey_ready"] and Sankey is not None:
+        flow_frames = clustering_context["flow_frames"]
+        df_flows = clustering_context["df_flows"]
+        time_labels = clustering_context["time_labels"]
+        time_label_positions = clustering_context["time_label_positions"]
+        nodes = build_sankey_nodes(flow_frames)
+        flow_types = get_ordered_flow_types(df_flows["type"])
+        color_list = auxiliary_functions.generate_plasma_colors(len(flow_types))
+        dict_color = {
+            flow_type: color_list[i] for i, flow_type in enumerate(flow_types)
+        }
+        flows = [
+            (
+                row.source_label,
+                row.target_label,
+                row.value,
+                {"color": dict_color[str(row.type)]},
             )
-            for flow_type in flow_types
+            for row in df_flows.itertuples()
         ]
-        ax_c.legend(
-            handles,
-            flow_types,
-            title="Group",
-            loc="center left",
-            bbox_to_anchor=(1, 0.5),
-        )
-    except ZeroDivisionError:
-        clustering_context["sankey_ready"] = False
-if clustering_context is None:
-    ax_c.text(
-        0.5,
-        0.5,
-        "Missing flow-clustering\noutputs under\n`primaryschool_day1_flow_clustering`.",
-        ha="center",
-        va="center",
-        fontsize=11,
-        transform=ax_c.transAxes,
-    )
-elif Sankey is None:
-    ax_c.text(
-        0.5,
-        0.5,
-        "Install `sankeyflow`\nto render panel C.",
-        ha="center",
-        va="center",
-        fontsize=11,
-        transform=ax_c.transAxes,
-    )
-elif not clustering_context["sankey_ready"]:
-    ax_c.text(
-        0.5,
-        0.5,
-        "No non-empty\ncommunity overlaps\nwere found across\nadjacent intervals.",
-        ha="center",
-        va="center",
-        fontsize=11,
-        transform=ax_c.transAxes,
-    )
-ax_c.set_title(
-    "(C) Community Evolution - Primary School - Day 1",
-    loc="left",
-    fontsize=12,
-)
-ax_c.set_yticks([])
-ax_c.set_frame_on(False)
+        try:
+            sankey = Sankey(
+                flows=flows,
+                nodes=nodes,
+                node_opts={"label_format": "", "color": "black"},
+            )
+            sankey.draw(ax)
 
-plt.tight_layout()
-OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-plt.savefig(OUTPUT_PATH, format="pdf", dpi=300, bbox_inches="tight")
-print(f"Total runtime: {time.perf_counter() - START_TIME:.2f} s")
+            for x_pos, label in zip(time_label_positions, time_labels):
+                ax.text(x_pos, -0.05, label, fontsize=10, ha="center", transform=ax.transAxes)
+
+            handles = [
+                plt.Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="w",
+                    markerfacecolor=dict_color[flow_type],
+                    markersize=10,
+                )
+                for flow_type in flow_types
+            ]
+            ax.legend(
+                handles,
+                flow_types,
+                title="Group",
+                loc="center left",
+                bbox_to_anchor=(1, 0.5),
+            )
+        except ZeroDivisionError:
+            clustering_context["sankey_ready"] = False
+    if clustering_context is None:
+        ax.text(
+            0.5,
+            0.5,
+            "Missing flow-clustering\noutputs under\n`primaryschool_day1_flow_clustering`.",
+            ha="center",
+            va="center",
+            fontsize=11,
+            transform=ax.transAxes,
+        )
+    elif Sankey is None:
+        ax.text(
+            0.5,
+            0.5,
+            "Install `sankeyflow`\nto render panel C.",
+            ha="center",
+            va="center",
+            fontsize=11,
+            transform=ax.transAxes,
+        )
+    elif not clustering_context["sankey_ready"]:
+        ax.text(
+            0.5,
+            0.5,
+            "No non-empty\ncommunity overlaps\nwere found across\nadjacent intervals.",
+            ha="center",
+            va="center",
+            fontsize=11,
+            transform=ax.transAxes,
+        )
+    ax.set_title(
+        "(C) Community Evolution - Primary School - Day 1",
+        loc="left",
+        fontsize=12,
+    )
+    ax.set_yticks([])
+    ax.set_frame_on(False)
+
+
+def main(output_path: Path = OUTPUT_PATH):
+    clustering_context = load_clustering_panels_context()
+
+    fig = plt.figure(figsize=(12, 4))
+    gs = fig.add_gridspec(1, 3)
+
+    ax_a = fig.add_subplot(gs[0, 0])
+    plot_primary_school_panel(ax_a)
+
+    ax_b = fig.add_subplot(gs[0, 1])
+    plot_flow_stability_panel(ax_b, clustering_context)
+
+    ax_c = fig.add_subplot(gs[0, 2])
+    plot_community_evolution_panel(ax_c, clustering_context)
+
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, format="pdf", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Total runtime: {time.perf_counter() - START_TIME:.2f} s")
+
+
+if __name__ == "__main__":
+    main()
