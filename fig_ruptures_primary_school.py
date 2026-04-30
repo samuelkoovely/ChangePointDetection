@@ -9,13 +9,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
 
+from primary_school_ruptures_defaults import (
+    build_primary_school_ruptures_results_path,
+)
+
 
 BASE_DIR = Path(__file__).resolve().parent
 FIGURES_DIR = BASE_DIR / "figures"
-DEFAULT_RESULTS_PATH = (
-    BASE_DIR
-    / "gridsearch_results/primaryschool_day1_ruptures/forward/window_3600/lamda_1.00000000000/ruptures_results.pkl"
-)
+DEFAULT_RESULTS_PATH = build_primary_school_ruptures_results_path(BASE_DIR)
 DEFAULT_OUTPUT_PATH = FIGURES_DIR / "fig_ruptures_primary_school.pdf"
 
 
@@ -109,6 +110,8 @@ def main() -> None:
     )
     axes = np.atleast_1d(axes).ravel()
 
+    signal_name = str(results.get("signal_name", "Entropy"))
+    signal_units = results.get("signal_units")
     signal_color = "C0"
     cp_color = "red"
 
@@ -143,10 +146,13 @@ def main() -> None:
 
     for ax in axes[::ncols]:
         if ax.get_visible():
-            ax.set_ylabel("Entropy")
+            ylabel = signal_name
+            if signal_units:
+                ylabel = f"{ylabel} ({signal_units})"
+            ax.set_ylabel(ylabel)
 
     legend_handles = [
-        Line2D([0], [0], color=signal_color, linewidth=1.5, label="Entropy signal"),
+        Line2D([0], [0], color=signal_color, linewidth=1.5, label=f"{signal_name} signal"),
         Line2D(
             [0],
             [0],
@@ -162,6 +168,7 @@ def main() -> None:
     direction = results.get("direction", "forward")
     fig.suptitle(
         f"Primary-school day 1 ({direction})\n"
+        f"{signal_name}\n"
         f"$\\lambda$ = {lamda:.2e}, window = {window_minutes:g} min",
         y=0.995,
     )

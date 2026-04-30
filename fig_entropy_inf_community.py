@@ -9,7 +9,14 @@ import pandas as pd
 
 import auxiliary_functions
 from TemporalNetwork import ContTempNetwork
-from sankeyflow import Sankey
+from primary_school_ruptures_defaults import (
+    PRIMARY_SCHOOL_DEFAULT_PENALTY,
+    build_primary_school_ruptures_results_path,
+)
+try:
+    from sankeyflow import Sankey
+except ModuleNotFoundError:
+    Sankey = None
 
 
 START_TIME = time.perf_counter()
@@ -22,13 +29,10 @@ CLUSTER_DIR = Path(
 NETWORK_PATH = (
     "data/primaryschoolnet"
 )
-PRIMARY_SCHOOL_SIGNAL_PATH = Path(
-    "gridsearch_results/primaryschool_day1/window_S_selected/3600/window_S1.00000000000"
+PRIMARY_SCHOOL_RUPTURES_RESULTS_PATH = build_primary_school_ruptures_results_path(
+    Path(".")
 )
-PRIMARY_SCHOOL_RUPTURES_RESULTS_PATH = Path(
-    "gridsearch_results/primaryschool_day1_ruptures/forward/window_3600/lamda_1.00000000000/ruptures_results.pkl"
-)
-PRIMARY_SCHOOL_SELECTED_PENALTY = 60.0
+PRIMARY_SCHOOL_SELECTED_PENALTY = PRIMARY_SCHOOL_DEFAULT_PENALTY
 PANEL_C_SELECTED_LAMBDAS_PATH = Path(
     "gridsearch_results/primaryschool_day1/panel_c_selected_lambdas.csv"
 )
@@ -326,18 +330,14 @@ def has_valid_sankey_flow_frames(flow_frames):
 
 
 def load_primary_school_penalty_plot_data(
-    signal_path: Path = PRIMARY_SCHOOL_SIGNAL_PATH,
     results_path: Path = PRIMARY_SCHOOL_RUPTURES_RESULTS_PATH,
     penalty: float = PRIMARY_SCHOOL_SELECTED_PENALTY,
 ):
-    with open(signal_path, "rb") as handle:
-        signal_payload = pickle.load(handle)
-
-    signal = np.asarray(signal_payload["signal_array"], dtype=float)
-    t_hours = np.asarray(signal_payload["t_samples"], dtype=float) / 3600.0
-
     with open(results_path, "rb") as handle:
         ruptures_results = pickle.load(handle)
+
+    signal = np.asarray(ruptures_results["signal_array"], dtype=float)
+    t_hours = np.asarray(ruptures_results["t_samples"], dtype=float) / 3600.0
 
     for result in ruptures_results["lambda_results"]:
         if np.isclose(float(result["penalty"]), float(penalty)):
@@ -360,56 +360,76 @@ def load_primary_school_penalty_plot_data(
     raise ValueError(f"Could not find penalty={penalty} in {results_path}.")
 
 
-clustering_metadata = load_clustering_metadata()
-interval_map = get_interval_map(clustering_metadata)
-summary_interval = resolve_summary_interval(interval_map)
-summary_cluster_results = load_cluster_results(
-    summary_interval["folder_name"],
-    clustering_metadata["lambdas"],
-)
-summary_lambdas, summary_avg_num_clusters, summary_avg_nvi = summarize_clusters(
-    summary_cluster_results
-)
+def load_clustering_panels_context():
+    try:
+        clustering_metadata = load_clustering_metadata()
+        interval_map = get_interval_map(clustering_metadata)
+        summary_interval = resolve_summary_interval(interval_map)
+        summary_cluster_results = load_cluster_results(
+            summary_interval["folder_name"],
+            clustering_metadata["lambdas"],
+        )
+        summary_lambdas, summary_avg_num_clusters, summary_avg_nvi = summarize_clusters(
+            summary_cluster_results
+        )
 
-panel_c_intervals = [
-    interval
-    for interval in sorted(
-        interval_map.values(),
-        key=lambda interval: (int(interval["start"]), int(interval["stop"])),
-    )
-    if str(interval["label"]) != "full"
-]
-panel_c_selected_lambdas = load_panel_c_selected_lambdas()
-bestclusters, resolved_panel_c_lambdas = resolve_panel_c_cluster_selection(
-    panel_c_intervals=panel_c_intervals,
-    metadata=clustering_metadata,
-    selected_lambdas=panel_c_selected_lambdas,
-)
+        panel_c_intervals = [
+            interval
+            for interval in sorted(
+                interval_map.values(),
+                key=lambda interval: (int(interval["start"]), int(interval["stop"])),
+            )
+            if str(interval["label"]) != "full"
+        ]
+        panel_c_selected_lambdas = load_panel_c_selected_lambdas()
+        bestclusters, resolved_panel_c_lambdas = resolve_panel_c_cluster_selection(
+            panel_c_intervals=panel_c_intervals,
+            metadata=clustering_metadata,
+            selected_lambdas=panel_c_selected_lambdas,
+        )
 
-TIME_LABELS, TIME_LABEL_POSITIONS = build_time_labels(panel_c_intervals)
+        time_labels, time_label_positions = build_time_labels(panel_c_intervals)
 
-net_rw = ContTempNetwork.load(
-    NETWORK_PATH,
-    attributes_list=[
-        "node_to_label_dict",
-        "events_table",
-        "node_class_array",
-    ],
-)
+        net_rw = ContTempNetwork.load(
+            NETWORK_PATH,
+            attributes_list=[
+                "node_to_label_dict",
+                "events_table",
+                "node_class_array",
+            ],
+        )
 
-class_dict = build_class_dict(net_rw)
-flow_frames = [
-    build_flow_dataframe(source_comms, target_comms, class_dict)
-    for source_comms, target_comms in zip(bestclusters[:-1], bestclusters[1:])
-]
-sankey_ready = has_valid_sankey_flow_frames(flow_frames)
-if sankey_ready:
-    flow_frames = add_sankey_node_labels(flow_frames)
-    df_flows = pd.concat(flow_frames, ignore_index=True)
-else:
-    df_flows = pd.DataFrame(
-        columns=["source", "target", "type", "value", "source_label", "target_label"]
-    )
+        class_dict = build_class_dict(net_rw)
+        flow_frames = [
+            build_flow_dataframe(source_comms, target_comms, class_dict)
+            for source_comms, target_comms in zip(bestclusters[:-1], bestclusters[1:])
+        ]
+        sankey_ready = has_valid_sankey_flow_frames(flow_frames)
+        if sankey_ready:
+            flow_frames = add_sankey_node_labels(flow_frames)
+            df_flows = pd.concat(flow_frames, ignore_index=True)
+        else:
+            df_flows = pd.DataFrame(
+                columns=["source", "target", "type", "value", "source_label", "target_label"]
+            )
+
+        return {
+            "summary_interval": summary_interval,
+            "summary_lambdas": summary_lambdas,
+            "summary_avg_num_clusters": summary_avg_num_clusters,
+            "summary_avg_nvi": summary_avg_nvi,
+            "resolved_panel_c_lambdas": resolved_panel_c_lambdas,
+            "time_labels": time_labels,
+            "time_label_positions": time_label_positions,
+            "flow_frames": flow_frames,
+            "df_flows": df_flows,
+            "sankey_ready": sankey_ready,
+        }
+    except FileNotFoundError:
+        return None
+
+
+clustering_context = load_clustering_panels_context()
 
 
 fig = plt.figure(figsize=(12, 4))
@@ -446,37 +466,62 @@ ax_a.set_ylabel("Entropy")
 ax_a.set_title("(A) Local Conditional Entropy", loc="left", fontsize=12)
 
 ax_b = fig.add_subplot(gs[0, 1])
-ax_b.plot(summary_lambdas, summary_avg_nvi, color="tab:red", label="static norm NVI")
-summary_interval_label = str(summary_interval["label"])
-if summary_interval_label in resolved_panel_c_lambdas:
-    ax_b.axvline(
-        resolved_panel_c_lambdas[summary_interval_label],
-        color="black",
-        linestyle=":",
-        linewidth=1.0,
-        alpha=0.8,
+if clustering_context is None:
+    ax_b.text(
+        0.5,
+        0.5,
+        "Missing flow-clustering\noutputs under\n`primaryschool_day1_flow_clustering`.",
+        ha="center",
+        va="center",
+        fontsize=11,
+        transform=ax_b.transAxes,
     )
-ax_b.set_xscale("log")
-ax_b.set_xlabel(r"$\lambda$ [s]")
-ax_b.set_ylabel("Avg. Norm. Var. Inf.", color="tab:red")
-ax_b.tick_params(axis="y", labelcolor="tab:red")
-ax_b.set_title(
-    (
-        f"(B) Flow Stability - {format_hour_label(summary_interval['start_hour'])} "
-        f"to {format_hour_label(summary_interval['stop_hour'])}"
-    ),
-    loc="left",
-    fontsize=12,
-)
+    ax_b.set_title("(B) Flow Stability", loc="left", fontsize=12)
+    ax_b.set_xticks([])
+    ax_b.set_yticks([])
+    ax_b.set_frame_on(False)
+else:
+    summary_interval = clustering_context["summary_interval"]
+    summary_lambdas = clustering_context["summary_lambdas"]
+    summary_avg_num_clusters = clustering_context["summary_avg_num_clusters"]
+    summary_avg_nvi = clustering_context["summary_avg_nvi"]
+    resolved_panel_c_lambdas = clustering_context["resolved_panel_c_lambdas"]
 
-ax_b_right = ax_b.twinx()
-ax_b_right.plot(summary_lambdas, summary_avg_num_clusters, color="tab:blue")
-ax_b_right.set_xlabel(r"$\lambda$ [s]")
-ax_b_right.set_ylabel("Avg. no. clusters", color="tab:blue")
-ax_b_right.tick_params(axis="y", labelcolor="tab:blue")
+    ax_b.plot(summary_lambdas, summary_avg_nvi, color="tab:red", label="static norm NVI")
+    summary_interval_label = str(summary_interval["label"])
+    if summary_interval_label in resolved_panel_c_lambdas:
+        ax_b.axvline(
+            resolved_panel_c_lambdas[summary_interval_label],
+            color="black",
+            linestyle=":",
+            linewidth=1.0,
+            alpha=0.8,
+        )
+    ax_b.set_xscale("log")
+    ax_b.set_xlabel(r"$\lambda$ [s]")
+    ax_b.set_ylabel("Avg. Norm. Var. Inf.", color="tab:red")
+    ax_b.tick_params(axis="y", labelcolor="tab:red")
+    ax_b.set_title(
+        (
+            f"(B) Flow Stability - {format_hour_label(summary_interval['start_hour'])} "
+            f"to {format_hour_label(summary_interval['stop_hour'])}"
+        ),
+        loc="left",
+        fontsize=12,
+    )
+
+    ax_b_right = ax_b.twinx()
+    ax_b_right.plot(summary_lambdas, summary_avg_num_clusters, color="tab:blue")
+    ax_b_right.set_xlabel(r"$\lambda$ [s]")
+    ax_b_right.set_ylabel("Avg. no. clusters", color="tab:blue")
+    ax_b_right.tick_params(axis="y", labelcolor="tab:blue")
 
 ax_c = fig.add_subplot(gs[0, 2])
-if sankey_ready:
+if clustering_context is not None and clustering_context["sankey_ready"] and Sankey is not None:
+    flow_frames = clustering_context["flow_frames"]
+    df_flows = clustering_context["df_flows"]
+    time_labels = clustering_context["time_labels"]
+    time_label_positions = clustering_context["time_label_positions"]
     nodes = build_sankey_nodes(flow_frames)
     flow_types = get_ordered_flow_types(df_flows["type"])
     color_list = auxiliary_functions.generate_plasma_colors(len(flow_types))
@@ -500,7 +545,7 @@ if sankey_ready:
         )
         sankey.draw(ax_c)
 
-        for x_pos, label in zip(TIME_LABEL_POSITIONS, TIME_LABELS):
+        for x_pos, label in zip(time_label_positions, time_labels):
             ax_c.text(x_pos, -0.05, label, fontsize=10, ha="center", transform=ax_c.transAxes)
 
         handles = [
@@ -522,8 +567,28 @@ if sankey_ready:
             bbox_to_anchor=(1, 0.5),
         )
     except ZeroDivisionError:
-        sankey_ready = False
-if not sankey_ready:
+        clustering_context["sankey_ready"] = False
+if clustering_context is None:
+    ax_c.text(
+        0.5,
+        0.5,
+        "Missing flow-clustering\noutputs under\n`primaryschool_day1_flow_clustering`.",
+        ha="center",
+        va="center",
+        fontsize=11,
+        transform=ax_c.transAxes,
+    )
+elif Sankey is None:
+    ax_c.text(
+        0.5,
+        0.5,
+        "Install `sankeyflow`\nto render panel C.",
+        ha="center",
+        va="center",
+        fontsize=11,
+        transform=ax_c.transAxes,
+    )
+elif not clustering_context["sankey_ready"]:
     ax_c.text(
         0.5,
         0.5,

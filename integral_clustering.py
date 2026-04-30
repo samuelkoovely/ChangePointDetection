@@ -21,14 +21,16 @@ from FlowStability import (
 )
 from TemporalNetwork import ContTempNetwork
 from primary_school_compute import load_primary_school_day1_network
+from primary_school_ruptures_defaults import (
+    PRIMARY_SCHOOL_DEFAULT_PENALTY,
+    build_primary_school_ruptures_results_path,
+)
 
 
 DEFAULT_NETWORK_PATH = Path("./data/primaryschoolnet")
-DEFAULT_RUPTURES_RESULTS_PATH = Path(
-    "./gridsearch_results/primaryschool_day1_ruptures/forward/window_3600/lamda_1.00000000000/ruptures_results.pkl"
-)
+DEFAULT_RUPTURES_RESULTS_PATH = build_primary_school_ruptures_results_path(Path("."))
 DEFAULT_OUTPUT_BASE = Path("//scratch/tmp/180/skoove/primaryschoolnet_heat/primaryschool_day1_flow_clustering")
-DEFAULT_PENALTY = 60.0
+DEFAULT_PENALTY = PRIMARY_SCHOOL_DEFAULT_PENALTY
 DEFAULT_LAMBDAS = np.logspace(-5, 0, 200)
 DEFAULT_NUM_REPEAT = 100
 DEFAULT_N_META_ITER_MAX = 1000

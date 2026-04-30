@@ -11,13 +11,18 @@ import numpy as np
 from gridsearch_score_snapshots import detect_change_points_from_signal
 from primary_school_compute import LAMBDAS as DEFAULT_LAMBDAS
 from primary_school_compute import OUTPUT_BASE as DEFAULT_SIGNAL_BASE
-from primary_school_compute import WINDOWS_SECONDS as DEFAULT_WINDOWS_SECONDS
+from primary_school_ruptures_defaults import (
+    PRIMARY_SCHOOL_RUPTURES_PENALTIES,
+    PRIMARY_SCHOOL_TARGET_LAMDA,
+    PRIMARY_SCHOOL_WINDOW_SECONDS,
+    build_primary_school_signal_path,
+)
 
 
 DEFAULT_OUTPUT_BASE = Path("./gridsearch_results/primaryschool_day1_ruptures")
-DEFAULT_WINDOW_SECONDS = float(DEFAULT_WINDOWS_SECONDS[-1])
+DEFAULT_WINDOW_SECONDS = float(PRIMARY_SCHOOL_WINDOW_SECONDS)
 DEFAULT_PENALTIES = np.asarray(
-    [50.0, 55.0, 60.0, 65.0],
+    PRIMARY_SCHOOL_RUPTURES_PENALTIES,
     dtype=float,
 )
 
@@ -48,7 +53,7 @@ def parse_args() -> argparse.Namespace:
         "--window-seconds",
         type=float,
         default=DEFAULT_WINDOW_SECONDS,
-        help="Window length in seconds. Default uses the 60-minute signal.",
+        help="Window length in seconds. Default uses the 30-minute signal.",
     )
     parser.add_argument(
         "--lamda",
@@ -56,7 +61,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Diffusion rate used to select the entropy signal. "
-            "Defaults to the largest available lambda."
+            "Defaults to 1.67e-03, resolved to the nearest available saved lambda."
         ),
     )
     parser.add_argument(
@@ -65,8 +70,8 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         default=None,
         help=(
-            "Penalty grid passed to ruptures. Default keeps only the "
-            "high-penalty primary-school range 50, 55, 60, 65."
+            "Penalty grid passed to ruptures. Default uses "
+            "1, 2, 3, 5, 8, 13, 21, 34, 55, 89."
         ),
     )
     parser.add_argument(
@@ -102,17 +107,19 @@ def resolve_lambda(requested: float | None, metadata: dict[str, Any] | None) -> 
     lambdas = available_lambdas(metadata)
 
     if requested is None:
-        return float(np.max(lambdas))
+        requested = PRIMARY_SCHOOL_TARGET_LAMDA
 
-    matches = np.flatnonzero(np.isclose(lambdas, float(requested)))
-    if matches.size == 0:
-        available_text = ", ".join(f"{lamda:.11f}" for lamda in lambdas)
-        raise ValueError(
-            f"Requested lambda {float(requested):.11f} is not available. "
-            f"Available lambdas: {available_text}"
-        )
+    nearest_index = int(np.argmin(np.abs(lambdas - float(requested))))
+    resolved = float(lambdas[nearest_index])
+    if np.isclose(resolved, float(requested), rtol=1e-2, atol=1e-12):
+        return resolved
 
-    return float(lambdas[matches[0]])
+    available_text = ", ".join(f"{lamda:.11f}" for lamda in lambdas)
+    raise ValueError(
+        f"Requested lambda {float(requested):.11f} is not available. "
+        f"Nearest saved lambda is {resolved:.11f}. "
+        f"Available lambdas: {available_text}"
+    )
 
 
 def load_signal_payload(
@@ -121,9 +128,20 @@ def load_signal_payload(
     lamda: float,
     reverse_time: bool = False,
 ) -> tuple[dict[str, Any], Path]:
-    signal_subdir = "window_S_selected_rev" if reverse_time else "window_S_selected"
-    lamda_key = f"{float(lamda):.11f}"
-    signal_path = signal_base / signal_subdir / str(int(window_seconds)) / f"window_S{lamda_key}"
+    if (
+        np.isclose(float(window_seconds), PRIMARY_SCHOOL_WINDOW_SECONDS)
+        and np.isclose(float(lamda), PRIMARY_SCHOOL_TARGET_LAMDA, rtol=1e-2, atol=1e-12)
+    ):
+        signal_path = build_primary_school_signal_path(
+            signal_base=signal_base,
+            reverse_time=reverse_time,
+        )
+    else:
+        signal_subdir = "window_S_selected_rev" if reverse_time else "window_S_selected"
+        lamda_key = f"{float(lamda):.11f}"
+        signal_path = (
+            signal_base / signal_subdir / str(int(window_seconds)) / f"window_S{lamda_key}"
+        )
 
     if not signal_path.exists():
         reverse_flag = " --reverse-time" if reverse_time else ""
