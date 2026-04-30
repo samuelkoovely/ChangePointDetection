@@ -24,7 +24,7 @@ from primary_school_ruptures_defaults import (
 
 DEFAULT_NETWORK_PATH = Path("./data/primaryschoolnet")
 DEFAULT_OUTPUT_BASE = Path("//scratch/tmp/180/skoove/primaryschoolnet_heat/")
-DEFAULT_LAMBDAS = np.logspace(-5, 0, 200)
+DEFAULT_LAMBDAS = np.logspace(-3, 1, 100)
 DEFAULT_INTER_T_SUBDIR = "inter_Tselected"
 DEFAULT_T_SUBDIR = "T"
 DEFAULT_RUPTURES_RESULTS_PATH = build_primary_school_ruptures_results_path(Path("."))
