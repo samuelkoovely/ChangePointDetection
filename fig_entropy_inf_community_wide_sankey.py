@@ -26,7 +26,16 @@ def main(output_path: Path = OUTPUT_PATH):
     plot_primary_school_panel(ax_a)
 
     ax_c = fig.add_subplot(gs[0, 1:])
-    plot_community_evolution_panel(ax_c, clustering_context)
+    plot_community_evolution_panel(
+        ax_c,
+        clustering_context,
+        title="(B)",
+    )
+    ax_c.set_title(
+        "Community Evolution - Primary School - Day 1",
+        loc="center",
+        fontsize=12,
+    )
 
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)

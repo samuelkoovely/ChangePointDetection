@@ -20,6 +20,7 @@ except ModuleNotFoundError:
 
 
 START_TIME = time.perf_counter()
+NODE_LABEL_PATTERN = re.compile(r"L(\d+)_C(\d+)$")
 
 
 OUTPUT_PATH = Path("figures/fig_entropy_inf_community.pdf")
@@ -188,7 +189,11 @@ def format_hour_label(hour_value):
 
 def build_time_labels(intervals):
     labels = [format_hour_label(interval["start_hour"]) for interval in intervals]
-    positions = np.linspace(0.1, 0.9, len(labels))
+    if len(labels) <= 1:
+        positions = np.array([0.5], dtype=float)
+    else:
+        # Anchor each time label at the center of its Sankey column.
+        positions = (np.arange(len(labels), dtype=float) + 0.5) / float(len(labels))
     return labels, positions
 
 
@@ -210,6 +215,13 @@ def school_class_sort_key(school_class):
 def get_ordered_flow_types(flow_values):
     unique_flow_types = {str(flow_type) for flow_type in flow_values}
     return sorted(unique_flow_types, key=school_class_sort_key)
+
+
+def parse_node_label(node_label):
+    match = NODE_LABEL_PATTERN.fullmatch(str(node_label))
+    if match is None:
+        return (float("inf"), float("inf"))
+    return (int(match.group(1)), int(match.group(2)))
 
 
 def build_class_dict(net):
@@ -255,6 +267,14 @@ def build_flow_dataframe(source_comms, target_comms, class_dict):
         )
         flow_counts[key] = flow_counts.get(key, 0) + 1
 
+    sorted_flow_items = sorted(
+        flow_counts.items(),
+        key=lambda item: (
+            int(item[0][0]),
+            int(item[0][1]),
+            school_class_sort_key(item[0][2]),
+        ),
+    )
     flows = [
         {
             "source": source_idx,
@@ -262,7 +282,7 @@ def build_flow_dataframe(source_comms, target_comms, class_dict):
             "type": school_class,
             "value": value,
         }
-        for (source_idx, target_idx, school_class), value in sorted(flow_counts.items())
+        for (source_idx, target_idx, school_class), value in sorted_flow_items
         if value > 0
     ]
     return pd.DataFrame(flows, columns=["source", "target", "type", "value"])
@@ -298,29 +318,65 @@ def add_sankey_node_labels(flow_frames):
     return labeled_frames
 
 
-def build_sankey_nodes(flow_frames):
-    nodes = []
+def build_node_class_profiles(flow_frames):
+    node_profiles = {}
     for frame in flow_frames:
-        source_totals = frame.groupby("source_label", sort=False)["value"].sum()
-        nodes.append(
-            [
-                (node, value, {"color": "black"})
-                for node, value in source_totals.items()
-            ]
-        )
+        for row in frame.itertuples():
+            flow_type = str(row.type)
+            for node_label in (row.source_label, row.target_label):
+                profile = node_profiles.setdefault(str(node_label), {})
+                profile[flow_type] = profile.get(flow_type, 0) + int(row.value)
+    return node_profiles
 
-    target_totals = flow_frames[-1].groupby("target_label", sort=False)["value"].sum()
-    nodes.append(
+
+def build_sankey_node_sort_key(node_label, node_profiles, ordered_flow_types):
+    node_profile = node_profiles.get(str(node_label), {})
+    class_counts = tuple(
+        -int(node_profile.get(flow_type, 0)) for flow_type in ordered_flow_types
+    )
+    _, cluster_index = parse_node_label(node_label)
+    return class_counts + (cluster_index, str(node_label))
+
+
+def build_sankey_nodes(flow_frames, ordered_flow_types):
+    node_profiles = build_node_class_profiles(flow_frames)
+    layer_totals = [
+        frame.groupby("source_label", sort=False)["value"].sum()
+        for frame in flow_frames
+    ]
+    layer_totals.append(
+        flow_frames[-1].groupby("target_label", sort=False)["value"].sum()
+    )
+
+    layer_node_labels = []
+    for totals in layer_totals:
+        ordered_node_labels = sorted(
+            (str(node_label) for node_label in totals.index),
+            key=lambda node_label: build_sankey_node_sort_key(
+                node_label,
+                node_profiles,
+                ordered_flow_types,
+            ),
+        )
+        layer_node_labels.append(ordered_node_labels)
+
+    node_order_lookup = {
+        node_label: order_index
+        for ordered_node_labels in layer_node_labels
+        for order_index, node_label in enumerate(ordered_node_labels)
+    }
+    nodes = [
         [
             (
-                node,
-                value,
+                node_label,
+                float(totals.loc[node_label]),
                 {"color": "black"},
             )
-            for node, value in target_totals.items()
+            for node_label in ordered_node_labels
         ]
-    )
-    return nodes
+        for totals, ordered_node_labels in zip(layer_totals, layer_node_labels)
+    ]
+    return nodes, node_order_lookup
 
 
 def has_valid_sankey_flow_frames(flow_frames):
@@ -514,18 +570,36 @@ def plot_flow_stability_panel(ax, clustering_context):
     ax_right.tick_params(axis="y", labelcolor="tab:blue")
 
 
-def plot_community_evolution_panel(ax, clustering_context):
+def plot_community_evolution_panel(
+    ax,
+    clustering_context,
+    title="(C) Community Evolution - Primary School - Day 1",
+):
     if clustering_context is not None and clustering_context["sankey_ready"] and Sankey is not None:
         flow_frames = clustering_context["flow_frames"]
         df_flows = clustering_context["df_flows"]
         time_labels = clustering_context["time_labels"]
         time_label_positions = clustering_context["time_label_positions"]
-        nodes = build_sankey_nodes(flow_frames)
         flow_types = get_ordered_flow_types(df_flows["type"])
+        nodes, node_order_lookup = build_sankey_nodes(flow_frames, flow_types)
+        flow_type_order = {
+            flow_type: index for index, flow_type in enumerate(flow_types)
+        }
         color_list = auxiliary_functions.generate_plasma_colors(len(flow_types))
         dict_color = {
             flow_type: color_list[i] for i, flow_type in enumerate(flow_types)
         }
+        ordered_rows = sorted(
+            df_flows.itertuples(),
+            key=lambda row: (
+                parse_node_label(row.source_label)[0],
+                node_order_lookup.get(str(row.source_label), float("inf")),
+                node_order_lookup.get(str(row.target_label), float("inf")),
+                flow_type_order[str(row.type)],
+                int(row.source),
+                int(row.target),
+            ),
+        )
         flows = [
             (
                 row.source_label,
@@ -533,7 +607,7 @@ def plot_community_evolution_panel(ax, clustering_context):
                 row.value,
                 {"color": dict_color[str(row.type)]},
             )
-            for row in df_flows.itertuples()
+            for row in ordered_rows
         ]
         try:
             sankey = Sankey(
@@ -544,7 +618,16 @@ def plot_community_evolution_panel(ax, clustering_context):
             sankey.draw(ax)
 
             for x_pos, label in zip(time_label_positions, time_labels):
-                ax.text(x_pos, -0.05, label, fontsize=10, ha="center", transform=ax.transAxes)
+                ax.text(
+                    x_pos,
+                    -0.05,
+                    label,
+                    fontsize=10,
+                    ha="center",
+                    va="top",
+                    transform=ax.transAxes,
+                    clip_on=False,
+                )
 
             handles = [
                 plt.Line2D(
@@ -580,7 +663,7 @@ def plot_community_evolution_panel(ax, clustering_context):
         ax.text(
             0.5,
             0.5,
-            "Install `sankeyflow`\nto render panel C.",
+            "Install `sankeyflow`\nto render this panel.",
             ha="center",
             va="center",
             fontsize=11,
@@ -596,11 +679,7 @@ def plot_community_evolution_panel(ax, clustering_context):
             fontsize=11,
             transform=ax.transAxes,
         )
-    ax.set_title(
-        "(C) Community Evolution - Primary School - Day 1",
-        loc="left",
-        fontsize=12,
-    )
+    ax.set_title(title, loc="left", fontsize=12)
     ax.set_yticks([])
     ax.set_frame_on(False)
 
