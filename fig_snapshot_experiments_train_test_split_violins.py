@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import pickle
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,18 +11,90 @@ from matplotlib.collections import PolyCollection
 from matplotlib.colors import to_rgb
 from matplotlib.patches import Patch
 
-from fig_snapshot_experiments_boxplots import METHOD_COLORS, style_axes
-from fig_snapshot_experiments_train_test_boxplots import (
-    _compute_log_floor,
-    _prepare_boxplot_values,
-    load_all_split_metric_arrays,
-)
-
+plt.style.use(Path(__file__).with_name("paper.mplstyle"))
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = (
     BASE_DIR / "figures" / "fig_snapshot_experiments_train_test_split_violins.pdf"
 )
+METHOD_COLORS = {
+    "Entropy": "#1f77b4",
+    "Frobenius": "#ff7f0e",
+    "LAD": "#2ca02c",
+}
+EXPERIMENT_ORDER = (
+    "Block2 snapshots",
+    "Block1 snapshots",
+    "Multi-bkps snapshots",
+)
+EXPERIMENT_DISPLAY_NAMES = {
+    "Block2 snapshots": "Benchmark1",
+    "Block1 snapshots": "Benchmark2",
+    "Multi-bkps snapshots": "Benchmark3",
+}
+SNAPSHOT_RESULT_PATHS = {
+    "Block2 snapshots": {
+        "Entropy": {
+            "train": BASE_DIR
+            / "gridsearch_results/block2activities_snapshots/gridsearch_results.pkl",
+            "test": BASE_DIR
+            / "gridsearch_results/block2activities_snapshots/test_set_results.pkl",
+        },
+        "Frobenius": {
+            "train": BASE_DIR
+            / "gridsearch_results/block2activities_snapshots_frobenius/gridsearch_results.pkl",
+            "test": BASE_DIR
+            / "gridsearch_results/block2activities_snapshots_frobenius/test_set_results.pkl",
+        },
+        "LAD": {
+            "train": BASE_DIR
+            / "gridsearch_results/block2activities_snapshots_laplacians/gridsearch_results.pkl",
+            "test": BASE_DIR
+            / "gridsearch_results/block2activities_snapshots_laplacians/test_set_results.pkl",
+        },
+    },
+    "Block1 snapshots": {
+        "Entropy": {
+            "train": BASE_DIR
+            / "gridsearch_results/block1activity_snapshots/gridsearch_results.pkl",
+            "test": BASE_DIR
+            / "gridsearch_results/block1activity_snapshots/test_set_results.pkl",
+        },
+        "Frobenius": {
+            "train": BASE_DIR
+            / "gridsearch_results/block1activity_snapshots_frobenius/gridsearch_results.pkl",
+            "test": BASE_DIR
+            / "gridsearch_results/block1activity_snapshots_frobenius/test_set_results.pkl",
+        },
+        "LAD": {
+            "train": BASE_DIR
+            / "gridsearch_results/block1activity_snapshots_laplacians/gridsearch_results.pkl",
+            "test": BASE_DIR
+            / "gridsearch_results/block1activity_snapshots_laplacians/test_set_results.pkl",
+        },
+    },
+    "Multi-bkps snapshots": {
+        "Entropy": {
+            "train": BASE_DIR
+            / "gridsearch_results/multibkps_block2activities_snapshots/gridsearch_results.pkl",
+            "test": BASE_DIR
+            / "gridsearch_results/multibkps_block2activities_snapshots/test_set_results.pkl",
+        },
+        "Frobenius": {
+            "train": BASE_DIR
+            / "gridsearch_results/multibkps_block2activities_snapshots_frobenius/gridsearch_results.pkl",
+            "test": BASE_DIR
+            / "gridsearch_results/multibkps_block2activities_snapshots_frobenius/test_set_results.pkl",
+        },
+        "LAD": {
+            "train": BASE_DIR
+            / "gridsearch_results/multibkps_block2activities_snapshots_laplacians/gridsearch_results.pkl",
+            "test": BASE_DIR
+            / "gridsearch_results/multibkps_block2activities_snapshots_laplacians/test_set_results.pkl",
+        },
+    },
+}
+SPLIT_ORDER = ("Train", "Test")
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,14 +117,6 @@ def parse_args() -> argparse.Namespace:
         help="Figure DPI when saving to disk.",
     )
     parser.add_argument(
-        "--include-multibkps",
-        action="store_true",
-        help=(
-            "Include the multi-bkps experiment. It is omitted by default because "
-            "some current distances are non-finite."
-        ),
-    )
-    parser.add_argument(
         "--show",
         action="store_true",
         help="Display the figure interactively after rendering.",
@@ -66,21 +132,288 @@ def _lighten_color(
     return tuple(base + (1.0 - base) * mix_with_white)
 
 
+def load_pickle(path: str | Path) -> Any:
+    with Path(path).open("rb") as handle:
+        return pickle.load(handle)
+
+
+def style_axes(ax: plt.Axes) -> None:
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(axis="y", color="#d9d9d9", linewidth=0.7, alpha=0.6)
+    ax.set_axisbelow(True)
+
+
+def _find_matching_float_key(mapping: dict[Any, Any], target: float, name: str) -> Any:
+    for key in mapping:
+        if np.isclose(float(key), float(target)):
+            return key
+    raise KeyError(f"Could not find {name}={target} in saved results.")
+
+
+def _find_matching_int_key(mapping: dict[Any, Any], target: int, name: str) -> Any:
+    for key in mapping:
+        if int(key) == int(target):
+            return key
+    raise KeyError(f"Could not find {name}={target} in saved results.")
+
+
+def _extract_entropy_metric_arrays(summary: dict[str, Any]) -> dict[str, np.ndarray]:
+    best_lamda = float(summary["best_lamda"])
+    best_window = float(summary["best_window"])
+    best_penalty = summary.get("best_penalty", summary.get("penalty"))
+    if best_penalty is not None:
+        best_penalty = float(best_penalty)
+
+    best_result = None
+    for lambda_result in summary.get("lambda_results", []):
+        if not np.isclose(float(lambda_result["lamda"]), best_lamda):
+            continue
+        result_penalty = lambda_result.get("penalty")
+        if best_penalty is not None:
+            if result_penalty is None or not np.isclose(
+                float(result_penalty),
+                best_penalty,
+            ):
+                continue
+        best_result = lambda_result
+        break
+
+    if best_result is None:
+        raise ValueError("Could not locate the best entropy training result.")
+
+    window_key = _find_matching_float_key(
+        best_result["per_window_f1_scores"],
+        best_window,
+        "window",
+    )
+    return {
+        "f1": np.asarray(best_result["per_window_f1_scores"][window_key], dtype=float),
+        "hausdorff": np.asarray(
+            best_result["per_window_hausdorff"][window_key],
+            dtype=float,
+        ),
+    }
+
+
+def _extract_frobenius_metric_arrays(summary: dict[str, Any]) -> dict[str, np.ndarray]:
+    best_window_length = int(summary["best_window_length"])
+    best_penalty = summary.get("best_penalty", summary.get("penalty"))
+    if best_penalty is not None:
+        best_penalty = float(best_penalty)
+
+    best_result = None
+    results_by_penalty = summary.get("results_by_penalty")
+    if isinstance(results_by_penalty, dict) and best_penalty is not None:
+        penalty_key = _find_matching_float_key(
+            results_by_penalty,
+            best_penalty,
+            "penalty",
+        )
+        best_result = results_by_penalty[penalty_key]
+
+    if best_result is None:
+        for penalty_result in summary.get("penalty_results", []):
+            result_penalty = penalty_result.get("penalty")
+            if best_penalty is not None:
+                if result_penalty is None or not np.isclose(
+                    float(result_penalty),
+                    best_penalty,
+                ):
+                    continue
+            best_result = penalty_result
+            break
+
+    if best_result is None:
+        best_result = summary.get("window_results")
+
+    if best_result is None:
+        raise ValueError("Could not locate the best Frobenius training result.")
+
+    window_key = _find_matching_int_key(
+        best_result["per_window_f1_scores"],
+        best_window_length,
+        "window_length",
+    )
+    return {
+        "f1": np.asarray(best_result["per_window_f1_scores"][window_key], dtype=float),
+        "hausdorff": np.asarray(
+            best_result["per_window_hausdorff"][window_key],
+            dtype=float,
+        ),
+    }
+
+
+def _extract_lad_metric_arrays(summary: dict[str, Any]) -> dict[str, np.ndarray]:
+    best_n_eigen = int(summary["best_n_eigen"])
+    best_window_length = int(summary["best_window_length"])
+
+    best_result = None
+    results_by_n_eigen = summary.get("results_by_n_eigen")
+    if isinstance(results_by_n_eigen, dict):
+        for key, result in results_by_n_eigen.items():
+            if int(key) == best_n_eigen:
+                best_result = result
+                break
+
+    if best_result is None:
+        for n_eigen_result in summary.get("n_eigen_results", []):
+            if int(n_eigen_result["n_eigen"]) == best_n_eigen:
+                best_result = n_eigen_result
+                break
+
+    if best_result is None:
+        raise ValueError("Could not locate the best LAD training result.")
+
+    window_key = _find_matching_int_key(
+        best_result["per_window_f1_scores"],
+        best_window_length,
+        "window_length",
+    )
+    return {
+        "f1": np.asarray(best_result["per_window_f1_scores"][window_key], dtype=float),
+        "hausdorff": np.asarray(
+            best_result["per_window_hausdorff"][window_key],
+            dtype=float,
+        ),
+    }
+
+
+def extract_metric_arrays(summary: dict[str, Any]) -> dict[str, np.ndarray]:
+    if "lambda_results" in summary:
+        return _extract_entropy_metric_arrays(summary)
+    if "window_results" in summary or "penalty_results" in summary:
+        return _extract_frobenius_metric_arrays(summary)
+    if "n_eigen_results" in summary or "results_by_n_eigen" in summary:
+        return _extract_lad_metric_arrays(summary)
+    raise ValueError("Unsupported training summary format.")
+
+
+def extract_test_metric_arrays(summary: dict[str, Any]) -> dict[str, np.ndarray]:
+    per_sample_results = summary.get("per_sample_results")
+    if not per_sample_results:
+        raise ValueError("Test summary does not contain per-sample results.")
+    return {
+        "f1": np.asarray([entry["f1"] for entry in per_sample_results], dtype=float),
+        "hausdorff": np.asarray(
+            [entry["hausdorff"] for entry in per_sample_results],
+            dtype=float,
+        ),
+    }
+
+
+def load_all_split_metric_arrays() -> dict[str, dict[str, dict[str, dict[str, np.ndarray]]]]:
+    metrics_by_experiment: dict[str, dict[str, dict[str, dict[str, np.ndarray]]]] = {}
+    for experiment_name, result_paths_by_method in SNAPSHOT_RESULT_PATHS.items():
+        method_metrics: dict[str, dict[str, dict[str, np.ndarray]]] = {}
+        for method_name, result_paths in result_paths_by_method.items():
+            train_summary = load_pickle(result_paths["train"])
+            test_summary = load_pickle(result_paths["test"])
+            method_metrics[method_name] = {
+                "Train": extract_metric_arrays(train_summary),
+                "Test": extract_test_metric_arrays(test_summary),
+            }
+        metrics_by_experiment[experiment_name] = method_metrics
+    return metrics_by_experiment
+
+
+def _compute_log_floor(
+    metrics_by_experiment: dict[str, dict[str, dict[str, dict[str, np.ndarray]]]],
+) -> float:
+    positive_values: list[float] = []
+    for methods in metrics_by_experiment.values():
+        for splits in methods.values():
+            for split_metrics in splits.values():
+                values = np.asarray(split_metrics["hausdorff"], dtype=float)
+                mask = np.isfinite(values) & (values > 0)
+                positive_values.extend(values[mask].tolist())
+    if not positive_values:
+        return 1e-3
+    return max(min(positive_values) * 0.5, 1e-6)
+
+
+def _prepare_boxplot_values(
+    values: np.ndarray,
+    hausdorff_cap: float,
+    log_floor: float,
+) -> np.ndarray:
+    display_values = np.asarray(values, dtype=float).copy()
+    display_values[np.isposinf(display_values)] = hausdorff_cap
+    display_values[np.isneginf(display_values)] = log_floor
+    display_values[display_values <= 0] = log_floor
+    display_values = display_values[~np.isnan(display_values)]
+    if display_values.size == 0:
+        return np.asarray([log_floor], dtype=float)
+    return display_values
+
+
+def _draw_boxplot(
+    ax: plt.Axes,
+    *,
+    values: np.ndarray,
+    position: float,
+    width: float,
+    method_color: str,
+    split_name: str,
+    hausdorff_cap: float,
+    log_floor: float,
+    showfliers: bool,
+) -> None:
+    display_values = _prepare_boxplot_values(values, hausdorff_cap, log_floor)
+    is_train = split_name == "Train"
+    facecolor = method_color if is_train else "white"
+    hatch = None if is_train else "///"
+    alpha = 0.9 if is_train else 1.0
+
+    artists = ax.boxplot(
+        [display_values],
+        positions=[position],
+        widths=width,
+        patch_artist=True,
+        showfliers=showfliers,
+    )
+    box = artists["boxes"][0]
+    box.set_facecolor(facecolor)
+    box.set_edgecolor(method_color)
+    box.set_linewidth(1.1)
+    box.set_alpha(alpha)
+    if hatch is not None:
+        box.set_hatch(hatch)
+
+    for median in artists["medians"]:
+        median.set_color("#2f2f2f")
+        median.set_linewidth(1.4)
+    for whisker in artists["whiskers"]:
+        whisker.set_color(method_color)
+        whisker.set_linewidth(1.0)
+    for cap in artists["caps"]:
+        cap.set_color(method_color)
+        cap.set_linewidth(1.0)
+    for flier in artists["fliers"]:
+        flier.set_markeredgecolor(method_color)
+        flier.set_markerfacecolor(method_color)
+        flier.set_alpha(0.5)
+
+
 def _select_experiments(
     metrics_by_experiment: dict[str, dict[str, dict[str, dict[str, np.ndarray]]]],
-    *,
-    include_multibkps: bool,
 ) -> dict[str, dict[str, dict[str, dict[str, np.ndarray]]]]:
-    if include_multibkps:
-        return metrics_by_experiment
-
+    filtered_names = [
+        experiment_name
+        for experiment_name in EXPERIMENT_ORDER
+        if experiment_name in metrics_by_experiment
+    ]
+    filtered_names.extend(
+        experiment_name
+        for experiment_name in metrics_by_experiment
+        if experiment_name not in filtered_names
+    )
     filtered = {
-        experiment_name: methods
-        for experiment_name, methods in metrics_by_experiment.items()
-        if experiment_name != "Multi-bkps snapshots"
+        experiment_name: metrics_by_experiment[experiment_name]
+        for experiment_name in filtered_names
     }
     if not filtered:
-        raise ValueError("No experiments available to plot after filtering.")
+        raise ValueError("No experiments available to plot.")
     return filtered
 
 
@@ -183,6 +516,10 @@ def draw_grouped_split_violins(
     metrics_by_experiment: dict[str, dict[str, dict[str, dict[str, np.ndarray]]]],
 ) -> None:
     experiment_names = list(metrics_by_experiment.keys())
+    experiment_display_names = [
+        EXPERIMENT_DISPLAY_NAMES.get(experiment_name, experiment_name)
+        for experiment_name in experiment_names
+    ]
     method_names = list(METHOD_COLORS.keys())
 
     centers = np.arange(len(experiment_names), dtype=float) * 3.8
@@ -245,24 +582,32 @@ def draw_grouped_split_violins(
 
     #ax.set_yscale("log")
     ax.set_xticks(centers)
-    ax.set_xticklabels(experiment_names)
+    ax.set_xticklabels(experiment_display_names)
     ax.set_xlim(centers[0] - 1.55, centers[-1] + 1.55)
     ax.set_ylim(
         bottom=log_floor / 1.15,
         top=hausdorff_cap * 1.12 if has_infinite_values else None,
     )
-    ax.tick_params(axis="x", labelsize=11)
+    ax.tick_params(
+        axis="x",
+        labelsize=11,
+        labeltop=True,
+        labelbottom=False,
+        top=False,
+        bottom=False,
+        length=0,
+        pad=8,
+    )
     ax.tick_params(axis="y", labelsize=11)
 
 
 def build_figure(
     metrics_by_experiment: dict[str, dict[str, dict[str, dict[str, np.ndarray]]]],
 ) -> plt.Figure:
-    fig_width = 3.8 + 2.6 * len(metrics_by_experiment)
+    fig_width = 4.6 + 3.0 * len(metrics_by_experiment)
     fig, ax = plt.subplots(1, 1, figsize=(fig_width, 4.3))
     draw_grouped_split_violins(ax=ax, metrics_by_experiment=metrics_by_experiment)
     ax.set_ylabel("Hausdorff distance")
-    ax.set_title("Train/test Hausdorff distributions across snapshot experiments")
 
     legend_handles = [
         Patch(
@@ -272,39 +617,20 @@ def build_figure(
         )
         for method_name in METHOD_COLORS
     ]
-    legend_handles.extend(
-        [
-            Patch(
-                facecolor="#707070",
-                edgecolor="#505050",
-                alpha=0.9,
-                label="Train (left)",
-            ),
-            Patch(
-                facecolor="#d9d9d9",
-                edgecolor="#505050",
-                alpha=0.9,
-                label="Test (right)",
-            ),
-        ]
-    )
     fig.legend(
         handles=legend_handles,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.04),
-        ncol=5,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+        ncol=3,
         frameon=False,
     )
-    fig.tight_layout(rect=(0.02, 0.02, 0.98, 0.90))
+    fig.tight_layout(rect=(0.02, 0.08, 0.98, 0.94))
     return fig
 
 
 def main() -> None:
     args = parse_args()
-    metrics_by_experiment = _select_experiments(
-        load_all_split_metric_arrays(),
-        include_multibkps=args.include_multibkps,
-    )
+    metrics_by_experiment = _select_experiments(load_all_split_metric_arrays())
     fig = build_figure(metrics_by_experiment=metrics_by_experiment)
 
     if args.output is not None:
