@@ -40,7 +40,7 @@ summary = grid_search_frobenius_distance(
     kernel="linear",
     save_signals=True,
     signals_outdir="./gridsearch_results/multibkps_block2activities_snapshots_frobenius/signals",
-    selection_metric="f1",
+    selection_metric="hausdorff",
     stopping_rule="penalty",
     penalties=PENALTIES,
 )

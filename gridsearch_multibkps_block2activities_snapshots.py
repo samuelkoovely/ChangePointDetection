@@ -42,7 +42,7 @@ summary = grid_search(
     kernel="linear",
     save_signals=True,
     signals_outdir="./gridsearch_results/multibkps_block2activities_snapshots/signals",
-    selection_metric="f1",
+    selection_metric="hausdorff",
     stopping_rule="penalty",
     penalties=PENALTIES,
 )

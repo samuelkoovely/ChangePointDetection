@@ -7,11 +7,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import to_rgb
 
-from fig_ct_experiments_train_test_boxplots import load_all_split_metric_arrays
-from fig_snapshot_experiments_boxplots import METHOD_COLORS, style_axes
 from fig_snapshot_experiments_train_test_split_violins import (
+    METHOD_COLORS,
     _clip_violin_half,
     _compute_hausdorff_cap,
+    extract_metric_arrays,
+    extract_test_metric_arrays,
+    load_pickle,
+    style_axes,
 )
 
 plt.style.use(Path(__file__).with_name("paper.mplstyle"))
@@ -23,10 +26,32 @@ DEFAULT_OUTPUT = (
     BASE_DIR / "figures" / "fig_ct_experiments_train_test_split_violins.pdf"
 )
 DISPLAY_EXPERIMENTS = (
-    ("CT Block2", "Change in Activity"),
-    ("CT Block1", "Change of Structure"),
+    ("CT Block2", "Change in Activity Benchmark"),
+    ("CT Block1", "Change of Structure Benchmark"),
 )
 DEFAULT_FIGURE_SIZE = (6.5, 2.7)
+CT_EXPERIMENT_RESULT_CANDIDATES = {
+    "CT Block1": {
+        "train": (
+            BASE_DIR / "gridsearch_results/ct_block1activity/gridsearch_results.pkl",
+            BASE_DIR / "gridsearch_results/ct_block1/gridsearch_results.pkl",
+        ),
+        "test": (
+            BASE_DIR / "gridsearch_results/ct_block1activity/test_set_results.pkl",
+            BASE_DIR / "gridsearch_results/ct_block1/test_set_results.pkl",
+        ),
+    },
+    "CT Block2": {
+        "train": (
+            BASE_DIR / "gridsearch_results/ct_block2activities/gridsearch_results.pkl",
+            BASE_DIR / "gridsearch_results/ct_block2/gridsearch_results.pkl",
+        ),
+        "test": (
+            BASE_DIR / "gridsearch_results/ct_block2activities/test_set_results.pkl",
+            BASE_DIR / "gridsearch_results/ct_block2/test_set_results.pkl",
+        ),
+    },
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,6 +87,36 @@ def _lighten_color(
 ) -> tuple[float, float, float]:
     base = np.asarray(to_rgb(color), dtype=float)
     return tuple(base + (1.0 - base) * mix_with_white)
+
+
+def resolve_summary_path(candidates: tuple[Path, ...], *, split_name: str) -> Path:
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    candidate_text = ", ".join(str(candidate) for candidate in candidates)
+    raise FileNotFoundError(
+        f"Could not find a {split_name} summary in any of: {candidate_text}"
+    )
+
+
+def load_all_split_metric_arrays() -> dict[str, dict[str, dict[str, np.ndarray]]]:
+    metrics_by_experiment: dict[str, dict[str, dict[str, np.ndarray]]] = {}
+    for experiment_name, split_candidates in CT_EXPERIMENT_RESULT_CANDIDATES.items():
+        train_summary_path = resolve_summary_path(
+            split_candidates["train"],
+            split_name=f"{experiment_name} training",
+        )
+        test_summary_path = resolve_summary_path(
+            split_candidates["test"],
+            split_name=f"{experiment_name} test",
+        )
+        train_summary = load_pickle(train_summary_path)
+        test_summary = load_pickle(test_summary_path)
+        metrics_by_experiment[experiment_name] = {
+            "Train": extract_metric_arrays(train_summary),
+            "Test": extract_test_metric_arrays(test_summary),
+        }
+    return metrics_by_experiment
 
 
 def _prepare_violin_values(
@@ -233,6 +288,17 @@ def draw_grouped_split_violins(
         bottom=0.0,
         top=hausdorff_cap * 1.12 if has_infinite_values else None,
     )
+    ax.tick_params(
+        axis="x",
+        labelsize=11,
+        labeltop=True,
+        labelbottom=False,
+        top=False,
+        bottom=False,
+        length=0,
+        pad=8,
+    )
+    ax.tick_params(axis="y", labelsize=11)
 
 
 def build_figure(
@@ -241,7 +307,7 @@ def build_figure(
     fig, ax = plt.subplots(1, 1, figsize=DEFAULT_FIGURE_SIZE)
     draw_grouped_split_violins(ax=ax, metrics_by_experiment=metrics_by_experiment)
     ax.set_ylabel("Hausdorff distance")
-    fig.subplots_adjust(left=0.11, right=0.99, top=0.95, bottom=0.26)
+    fig.subplots_adjust(left=0.11, right=0.99, top=0.82, bottom=0.12)
     return fig
 
 
