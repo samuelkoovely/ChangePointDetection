@@ -37,6 +37,7 @@ def _min_distance(x: float, points: Sequence[float]) -> float:
 def hausdorff_distance(
     true_cps: Iterable[float],
     pred_cps: Iterable[float],
+    max_error: float | None = None,
 ) -> float:
     """
     Compute the Hausdorff distance between the true and predicted change-point sets.
@@ -62,19 +63,28 @@ def hausdorff_distance(
     Notes
     -----
     - If both sets are empty, returns 0.0.
-    - If exactly one set is empty, returns math.inf.
+    - If exactly one set is empty, returns `max_error` when provided and
+      `math.inf` otherwise.
+    - When `max_error` is provided, the returned Hausdorff distance is capped
+      above by that value.
     """
     true_list = _to_sorted_list(true_cps)
     pred_list = _to_sorted_list(pred_cps)
 
+    if max_error is not None and max_error < 0:
+        raise ValueError("max_error must be non-negative")
+
     if not true_list and not pred_list:
         return 0.0
     if not true_list or not pred_list:
-        return math.inf
+        return math.inf if max_error is None else float(max_error)
 
     term1 = max(_min_distance(t_hat, true_list) for t_hat in pred_list)
     term2 = max(_min_distance(t_star, pred_list) for t_star in true_list)
-    return max(term1, term2)
+    distance = max(term1, term2)
+    if max_error is not None:
+        distance = min(distance, float(max_error))
+    return distance
 
 
 
