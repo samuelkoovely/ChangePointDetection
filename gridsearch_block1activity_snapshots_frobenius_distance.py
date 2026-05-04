@@ -38,6 +38,20 @@ class CPSample:
     name: str | None = None
 
 
+def get_sample_num_snapshots(sample: CPSample) -> int:
+    """
+    Return the number of snapshots represented by one snapshot-network sample.
+    """
+
+    if hasattr(sample.data, "times"):
+        return max(1, int(len(sample.data.times) - 1))
+
+    if sample.true_change_points:
+        return max(1, int(max(sample.true_change_points)) + 1)
+
+    return 1
+
+
 def get_signal_result_filename(
     window_length: int,
     suffix: str = ".pkl",
@@ -221,7 +235,11 @@ def evaluate_precomputed_window_signals(
                 f1_score(sample.true_change_points, pred_cps, margin)
             )
             window_hausdorff_scores.append(
-                hausdorff_distance(sample.true_change_points, pred_cps)
+                hausdorff_distance(
+                    sample.true_change_points,
+                    pred_cps,
+                    max_error=float(get_sample_num_snapshots(sample)),
+                )
             )
 
         window_f1_scores_array = np.asarray(window_f1_scores, dtype=float)
@@ -422,7 +440,7 @@ if __name__ == "__main__":
 
     first_net = dataset[0]["tnet"]
     num_snapshots = max(1, len(first_net.times) - 1)
-    max_window_length = max(1, min(8, num_snapshots - 1))
+    max_window_length = max(1, min(5, num_snapshots - 1))
 
     window_lengths = list(range(1, max_window_length + 1))
     margin = 1.0

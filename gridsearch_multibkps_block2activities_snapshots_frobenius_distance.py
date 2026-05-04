@@ -14,8 +14,10 @@ PENALTIES = np.linspace(0.01, 2.0, 10)
 with open("data/multibkps_block2activities_snapshots.pkl", "rb") as f:
     dataset = pickle.load(f)
 
-aggregation_window = int(dataset[0]["aggregation_window"])
-window_lengths = [max(1, aggregation_window // 2)]
+first_net = dataset[0]["tnet"]
+num_snapshots = max(1, len(first_net.times) - 1)
+max_window_length = max(1, min(5, num_snapshots - 1))
+window_lengths = list(range(1, max_window_length + 1))
 margin = 1.0
 n_jobs = 6
 

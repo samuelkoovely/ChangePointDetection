@@ -27,11 +27,23 @@ def aggregate_breakpoints(
     aggregation_window: int,
     num_snapshots: int,
 ) -> list[int]:
-    aggregated_breakpoints = sorted(
-        {
+    # This benchmark alternates between two activity regimes. If multiple
+    # regime flips land in the same snapshot bin, only the parity matters:
+    # an even number of flips cancels out, while an odd number leaves one
+    # effective change inside that snapshot.
+    breakpoint_counts_by_snapshot: dict[int, int] = {}
+    for breakpoint in breakpoints:
+        snapshot_index = (
             int(float(breakpoint) // aggregation_window) - SNAPSHOTS_TO_SKIP_AT_START
-            for breakpoint in breakpoints
-        }
+        )
+        breakpoint_counts_by_snapshot[snapshot_index] = (
+            breakpoint_counts_by_snapshot.get(snapshot_index, 0) + 1
+        )
+
+    aggregated_breakpoints = sorted(
+        snapshot_index
+        for snapshot_index, count in breakpoint_counts_by_snapshot.items()
+        if count % 2 == 1
     )
     return [
         breakpoint

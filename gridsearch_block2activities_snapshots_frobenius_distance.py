@@ -38,6 +38,20 @@ class CPSample:
     name: str | None = None
 
 
+def get_sample_num_snapshots(sample: CPSample) -> int:
+    """
+    Return the number of snapshots represented by one snapshot-network sample.
+    """
+
+    if hasattr(sample.data, "times"):
+        return max(1, int(len(sample.data.times) - 1))
+
+    if sample.true_change_points:
+        return max(1, int(max(sample.true_change_points)) + 1)
+
+    return 1
+
+
 def get_signal_result_filename(
     window_length: int,
     suffix: str = ".pkl",
@@ -237,7 +251,11 @@ def evaluate_precomputed_window_signals(
                 f1_score(sample.true_change_points, pred_cps, margin)
             )
             window_hausdorff_scores.append(
-                hausdorff_distance(sample.true_change_points, pred_cps)
+                hausdorff_distance(
+                    sample.true_change_points,
+                    pred_cps,
+                    max_error=float(get_sample_num_snapshots(sample)),
+                )
             )
 
         window_f1_scores_array = np.asarray(window_f1_scores, dtype=float)
@@ -448,12 +466,17 @@ def grid_search_frobenius_distance(
         else:
             selection_array[np.isnan(selection_array)] = math.inf
             if np.all(np.isinf(selection_array)):
-                best_index = None
-                best_window_length = None
-                best_penalty = None
-                best_score = math.nan
-                best_f1 = math.nan
-                best_hausdorff = math.nan
+                # If every candidate has infinite mean Hausdorff, keep the
+                # Hausdorff objective but pick a deterministic fallback so
+                # downstream evaluation/plotting can still run.
+                best_index = (0,) if penalties is None else (0, 0)
+                best_window_length = int(window_lengths[best_index[0]])
+                best_penalty = (
+                    None if penalties is None else float(penalties[best_index[1]])
+                )
+                best_score = float(hausdorff_array[best_index])
+                best_f1 = float(score_array[best_index])
+                best_hausdorff = float(hausdorff_array[best_index])
             else:
                 best_index = np.unravel_index(
                     int(np.argmin(selection_array)),
@@ -516,7 +539,7 @@ if __name__ == "__main__":
 
     first_net = dataset[0]["tnet"]
     num_snapshots = max(1, len(first_net.times) - 1)
-    max_window_length = max(1, min(8, num_snapshots - 1))
+    max_window_length = max(1, min(5, num_snapshots - 1))
 
     window_lengths = list(range(1, max_window_length + 1))
     margin = 1.0
