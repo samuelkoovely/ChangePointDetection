@@ -18,9 +18,9 @@ DEFAULT_LOCAL_WINDOW = 5.0
 DEFAULT_GRID_WINDOWS = [1.0, 5.0, 10.0]
 DEFAULT_OUTPUT = Path("./figures/fig_local_entropy_combined.pdf")
 TOP_PANEL_SPECS = [
-    {"key": "merge_merge", "title": "(A) Merge-Merge"},
-    {"key": "merge_split", "title": "(B) Merge-Split"},
-    {"key": "split_merge", "title": "(C) Split-Merge"},
+    {"key": "merge_merge", "title": "(A)"},
+    {"key": "merge_split", "title": "(B)"},
+    {"key": "split_merge", "title": "(C)"},
 ]
 BOTTOM_PANEL_LABELS = ["(D)", "(E)", "(F)"]
 

@@ -226,18 +226,6 @@ def entropy_limits_for_windows(
     return ct_examples.pad_limits(np.concatenate(values))
 
 
-def add_row_header(ax, title: str) -> None:
-    ax.text(
-        0.0,
-        1.14,
-        title,
-        transform=ax.transAxes,
-        ha="left",
-        va="bottom",
-        fontsize=12,
-    )
-
-
 def main() -> None:
     args = parse_args()
     dataset_results = ct_examples.parse_dataset_results(args.dataset_results)
@@ -296,8 +284,6 @@ def main() -> None:
         )
         interval_matrices = ct_examples.compute_interval_matrices(net, inset_intervals)
         inset_positions = [0.14, 0.62]
-
-        add_row_header(axes[row_index, 0], spec.title)
 
         for col_index, axis in enumerate(axes[row_index]):
             if col_index >= len(windows):
