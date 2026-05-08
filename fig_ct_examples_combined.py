@@ -43,6 +43,10 @@ BREAKPOINT_STYLE = {
     "linewidth": 1.2,
     "alpha": 0.85,
 }
+ROW_ORDER = {
+    "block2": 0,
+    "block1": 1,
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -219,7 +223,10 @@ def main() -> None:
     args = parse_args()
     dataset_results = ct_examples.parse_dataset_results(args.dataset_results)
     selections = ct_examples.parse_selection_entries(args.selection)
-    specs = get_specs(args.datasets)
+    specs = sorted(
+        get_specs(args.datasets),
+        key=lambda spec: (ROW_ORDER.get(spec.key, len(ROW_ORDER)), spec.key),
+    )
 
     loaded_rows = []
     for spec in specs:
