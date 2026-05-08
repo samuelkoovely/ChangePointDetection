@@ -215,17 +215,6 @@ def panel_label(index: int) -> str:
     return f"({index + 1})"
 
 
-def entropy_limits_for_windows(
-    signal_bundle: dict[str, Any],
-    windows: list[float],
-) -> tuple[float, float]:
-    values = []
-    for window in windows:
-        payload = signal_bundle["signals_by_window"][float(window)]
-        values.append(np.asarray(payload["signal"], dtype=float))
-    return ct_examples.pad_limits(np.concatenate(values))
-
-
 def main() -> None:
     args = parse_args()
     dataset_results = ct_examples.parse_dataset_results(args.dataset_results)
@@ -274,8 +263,6 @@ def main() -> None:
         t_min = float(net.times[0])
         t_max = float(net.times[-1])
         active_times, active_counts = ct_examples.compute_active_event_signal(sample)
-        active_ylim = ct_examples.pad_limits(active_counts)
-        entropy_ylim = entropy_limits_for_windows(signal_bundle, windows)
         inset_intervals = ct_examples.build_inset_intervals(
             t_min=t_min,
             t_max=t_max,
@@ -303,7 +290,7 @@ def main() -> None:
             )
             axis.axvline(breakpoint, **BREAKPOINT_STYLE)
             axis.set_xlim(t_min, t_max)
-            axis.set_ylim(*active_ylim)
+            axis.set_ylim(*ct_examples.pad_limits(active_counts))
             axis.tick_params(axis="y", labelcolor=ACTIVE_STYLE["color"])
             axis.set_title(
                 f"{panel_label(panel_index)} {format_window_title(window)}",
@@ -317,17 +304,13 @@ def main() -> None:
 
             if col_index == 0:
                 axis.set_ylabel("# Active Links", color=ACTIVE_STYLE["color"])
-            else:
-                axis.tick_params(axis="y", labelleft=False)
 
             entropy_axis = axis.twinx()
             entropy_axis.plot(entropy_times, entropy_values, **ENTROPY_STYLE)
-            entropy_axis.set_ylim(*entropy_ylim)
+            entropy_axis.set_ylim(*ct_examples.pad_limits(entropy_values))
             entropy_axis.tick_params(axis="y", labelcolor=ENTROPY_STYLE["color"])
             if col_index == len(windows) - 1:
                 entropy_axis.set_ylabel("Local entropy", color=ENTROPY_STYLE["color"])
-            else:
-                entropy_axis.tick_params(axis="y", labelright=False)
 
             ct_examples.draw_matrix_insets(
                 host_ax=axis,
