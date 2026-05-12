@@ -18,15 +18,22 @@ START_TIME = time.perf_counter()
 OUTPUT_PATH = Path("figures/fig_entropy_inf_community_wide_sankey.pdf")
 
 
+def set_panel_title_fontsize(ax, fontsize):
+    for title_attr in ("title", "_left_title", "_right_title"):
+        title_obj = getattr(ax, title_attr, None)
+        if title_obj is not None:
+            title_obj.set_fontsize(fontsize)
+
+
 def style_primary_school_panel(
     ax,
     *,
-    title_fontsize=16,
-    axis_label_fontsize=14,
-    tick_labelsize=14,
+    title_fontsize=18,
+    axis_label_fontsize=16,
+    tick_labelsize=16,
     tick_rotation=45,
 ):
-    ax.title.set_fontsize(title_fontsize)
+    set_panel_title_fontsize(ax, title_fontsize)
     ax.xaxis.label.set_size(axis_label_fontsize)
     ax.yaxis.label.set_size(axis_label_fontsize)
 
@@ -48,13 +55,13 @@ def style_primary_school_panel(
 def style_community_evolution_panel(
     ax,
     *,
-    title_fontsize=16,
-    text_fontsize=11,
-    legend_fontsize=14,
-    legend_title_fontsize=14,
-    legend_markersize=14,
+    title_fontsize=18,
+    text_fontsize=13,
+    legend_fontsize=16,
+    legend_title_fontsize=16,
+    legend_markersize=16,
 ):
-    ax.title.set_fontsize(title_fontsize)
+    set_panel_title_fontsize(ax, title_fontsize)
 
     for text in ax.texts:
         text.set_fontsize(text_fontsize)
