@@ -22,8 +22,8 @@ def style_primary_school_panel(
     ax,
     *,
     title_fontsize=16,
-    axis_label_fontsize=12,
-    tick_labelsize=11,
+    axis_label_fontsize=14,
+    tick_labelsize=14,
     tick_rotation=45,
 ):
     ax.title.set_fontsize(title_fontsize)
