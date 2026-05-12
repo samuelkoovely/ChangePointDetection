@@ -21,7 +21,7 @@ OUTPUT_PATH = Path("figures/fig_entropy_inf_community_wide_sankey.pdf")
 def style_primary_school_panel(
     ax,
     *,
-    title_fontsize=14,
+    title_fontsize=16,
     axis_label_fontsize=12,
     tick_labelsize=11,
     tick_rotation=45,
@@ -48,11 +48,11 @@ def style_primary_school_panel(
 def style_community_evolution_panel(
     ax,
     *,
-    title_fontsize=14,
+    title_fontsize=16,
     text_fontsize=11,
-    legend_fontsize=11,
-    legend_title_fontsize=12,
-    legend_markersize=11,
+    legend_fontsize=14,
+    legend_title_fontsize=14,
+    legend_markersize=14,
 ):
     ax.title.set_fontsize(title_fontsize)
 
