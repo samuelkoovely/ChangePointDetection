@@ -370,7 +370,7 @@ def main() -> None:
     )
 
     fig.subplots_adjust(
-        left=0.11,
+        left=0.14,
         right=0.93,
         top=0.95,
         bottom=0.14,
@@ -378,7 +378,7 @@ def main() -> None:
         hspace=0.4,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(args.output, dpi=int(args.dpi), bbox_inches="tight", pad_inches=0.12)
+    fig.savefig(args.output, dpi=int(args.dpi), bbox_inches="tight", pad_inches=0.18)
 
     if args.show:
         plt.show()
