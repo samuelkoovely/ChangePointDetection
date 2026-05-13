@@ -51,7 +51,9 @@ PANEL_TITLE_FONTSIZE = 14
 AXIS_LABEL_FONTSIZE = 14
 TICK_LABEL_FONTSIZE = 13
 LEGEND_FONTSIZE = 14
-X_MARGIN_FRACTION = 0.02
+X_LEFT_MARGIN_FRACTION = 0.02
+X_RIGHT_TRIM_FRACTION = 0.005
+MIN_X_RIGHT_TRIM = 0.25
 
 
 def parse_args() -> argparse.Namespace:
@@ -274,8 +276,21 @@ def main() -> None:
         breakpoint = float(sample["bkps"][0])
         t_min = float(net.times[0])
         t_max = float(net.times[-1])
-        x_pad = max((t_max - t_min) * X_MARGIN_FRACTION, 1.0)
+        span = max(t_max - t_min, 1e-6)
+        x_left_pad = max(span * X_LEFT_MARGIN_FRACTION, 1.0)
+        x_right_trim = max(span * X_RIGHT_TRIM_FRACTION, MIN_X_RIGHT_TRIM)
         active_times, active_counts = ct_examples.compute_active_event_signal(sample)
+        plot_active_times = active_times
+        plot_active_counts = active_counts
+        display_t_max = t_max - x_right_trim
+        if len(active_counts) > 1 and np.isclose(float(active_counts[-1]), 0.0):
+            plot_active_times = active_times[:-1]
+            plot_active_counts = active_counts[:-1]
+            display_t_max = min(
+                display_t_max,
+                float(active_times[-1]) - max(1e-6, 0.001 * span),
+            )
+        display_t_max = max(t_min + 1e-6, display_t_max)
         inset_intervals = ct_examples.build_inset_intervals(
             t_min=t_min,
             t_max=t_max,
@@ -296,13 +311,13 @@ def main() -> None:
             entropy_values = np.asarray(signal_payload["signal"], dtype=float)
 
             axis.step(
-                active_times,
-                active_counts,
+                plot_active_times,
+                plot_active_counts,
                 where="post",
                 **ACTIVE_STYLE,
             )
             axis.axvline(breakpoint, **BREAKPOINT_STYLE)
-            axis.set_xlim(t_min - x_pad, t_max + x_pad)
+            axis.set_xlim(t_min - x_left_pad, display_t_max)
             axis.set_ylim(*ct_examples.pad_limits(active_counts))
             axis.tick_params(
                 axis="x",
