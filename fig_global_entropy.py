@@ -40,6 +40,11 @@ LIMIT_STYLE = {
     "zorder": 5,
 }
 GLOBAL_LIMIT_START_TIME = 0.0
+PANEL_TITLE_FONTSIZE = 16
+AXIS_LABEL_FONTSIZE = 14
+TICK_LABEL_FONTSIZE = 13
+LEGEND_FONTSIZE = 14
+INSET_TITLE_FONTSIZE = 10
 
 
 def parse_args():
@@ -477,8 +482,9 @@ def plot_network_panel(
 
     ax.set_xlim(-5, 310)
     ax.set_ylim(-2, 5)
-    ax.set_xlabel("t [s]")
-    ax.set_title(panel_title, loc="left", fontsize=14)
+    ax.set_xlabel("t [s]", fontsize=AXIS_LABEL_FONTSIZE)
+    ax.set_title(panel_title, loc="left", fontsize=PANEL_TITLE_FONTSIZE)
+    ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
     ax.set_box_aspect(1)
 
     for matrix, pos, (start, end) in zip(matrices, inset_positions, time_intervals):
@@ -505,7 +511,7 @@ def plot_network_panel(
         inset_ax.set_facecolor("white")
         inset_ax.set_xticks([])
         inset_ax.set_yticks([])
-        inset_ax.set_title(f"{start} ≤ t < {end}", fontsize=8)
+        inset_ax.set_title(f"{start} ≤ t < {end}", fontsize=INSET_TITLE_FONTSIZE)
         for spine in inset_ax.spines.values():
             spine.set_visible(True)
             spine.set_linewidth(0.8)
@@ -613,7 +619,7 @@ def main():
             backward_curve=backward_curve,
         )
 
-    axes[0].set_ylabel("Entropy")
+    axes[0].set_ylabel("Entropy", fontsize=AXIS_LABEL_FONTSIZE)
     for ax in axes[1:]:
         ax.tick_params(labelleft=False)
 
@@ -658,7 +664,7 @@ def main():
         loc="lower center",
         bbox_to_anchor=(0.5, 0.02),
         ncol=len(legend_handles),
-        fontsize="medium",
+        fontsize=LEGEND_FONTSIZE,
         frameon=False,
         borderaxespad=0.0,
     )

@@ -47,6 +47,11 @@ ROW_ORDER = {
     "block2": 0,
     "block1": 1,
 }
+PANEL_TITLE_FONTSIZE = 14
+AXIS_LABEL_FONTSIZE = 14
+TICK_LABEL_FONTSIZE = 13
+LEGEND_FONTSIZE = 14
+X_MARGIN_FRACTION = 0.02
 
 
 def parse_args() -> argparse.Namespace:
@@ -269,6 +274,7 @@ def main() -> None:
         breakpoint = float(sample["bkps"][0])
         t_min = float(net.times[0])
         t_max = float(net.times[-1])
+        x_pad = max((t_max - t_min) * X_MARGIN_FRACTION, 1.0)
         active_times, active_counts = ct_examples.compute_active_event_signal(sample)
         inset_intervals = ct_examples.build_inset_intervals(
             t_min=t_min,
@@ -296,28 +302,48 @@ def main() -> None:
                 **ACTIVE_STYLE,
             )
             axis.axvline(breakpoint, **BREAKPOINT_STYLE)
-            axis.set_xlim(t_min, t_max)
+            axis.set_xlim(t_min - x_pad, t_max + x_pad)
             axis.set_ylim(*ct_examples.pad_limits(active_counts))
-            axis.tick_params(axis="y", labelcolor=ACTIVE_STYLE["color"])
+            axis.tick_params(
+                axis="x",
+                labelsize=TICK_LABEL_FONTSIZE,
+            )
+            axis.tick_params(
+                axis="y",
+                labelcolor=ACTIVE_STYLE["color"],
+                labelsize=TICK_LABEL_FONTSIZE,
+            )
             axis.set_title(
                 f"{panel_label(panel_index)} {format_window_title(window)}",
                 loc="left",
-                fontsize=12,
+                fontsize=PANEL_TITLE_FONTSIZE,
             )
             axis.set_box_aspect(1)
 
             if row_index == n_rows - 1:
-                axis.set_xlabel("t [s]")
+                axis.set_xlabel("t [s]", fontsize=AXIS_LABEL_FONTSIZE)
 
             if col_index == 0:
-                axis.set_ylabel("# Active Links", color=ACTIVE_STYLE["color"])
+                axis.set_ylabel(
+                    "# Active Links",
+                    color=ACTIVE_STYLE["color"],
+                    fontsize=AXIS_LABEL_FONTSIZE,
+                )
 
             entropy_axis = axis.twinx()
             entropy_axis.plot(entropy_times, entropy_values, **ENTROPY_STYLE)
             entropy_axis.set_ylim(*ct_examples.pad_limits(entropy_values))
-            entropy_axis.tick_params(axis="y", labelcolor=ENTROPY_STYLE["color"])
+            entropy_axis.tick_params(
+                axis="y",
+                labelcolor=ENTROPY_STYLE["color"],
+                labelsize=TICK_LABEL_FONTSIZE,
+            )
             if col_index == len(windows) - 1:
-                entropy_axis.set_ylabel("Local entropy", color=ENTROPY_STYLE["color"])
+                entropy_axis.set_ylabel(
+                    "Local entropy",
+                    color=ENTROPY_STYLE["color"],
+                    fontsize=AXIS_LABEL_FONTSIZE,
+                )
 
             ct_examples.draw_matrix_insets(
                 host_ax=axis,
@@ -338,20 +364,21 @@ def main() -> None:
         loc="lower center",
         bbox_to_anchor=(0.5, 0.02),
         ncol=len(legend_handles),
+        fontsize=LEGEND_FONTSIZE,
         frameon=False,
         borderaxespad=0.0,
     )
 
     fig.subplots_adjust(
-        left=0.08,
-        right=0.94,
+        left=0.11,
+        right=0.93,
         top=0.95,
-        bottom=0.12,
+        bottom=0.14,
         wspace=0.28,
         hspace=0.4,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(args.output, dpi=int(args.dpi), bbox_inches="tight")
+    fig.savefig(args.output, dpi=int(args.dpi), bbox_inches="tight", pad_inches=0.12)
 
     if args.show:
         plt.show()

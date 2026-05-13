@@ -95,6 +95,10 @@ SNAPSHOT_RESULT_PATHS = {
     },
 }
 SPLIT_ORDER = ("Train", "Test")
+AXIS_LABEL_FONTSIZE = 14
+TICK_LABEL_FONTSIZE = 13
+LEGEND_FONTSIZE = 14
+ANNOTATION_FONTSIZE = 11
 
 
 def parse_args() -> argparse.Namespace:
@@ -506,7 +510,7 @@ def _draw_half_violin(
             r"$\infty$",
             ha="center",
             va="bottom",
-            fontsize=9,
+            fontsize=ANNOTATION_FONTSIZE,
             color="#404040",
         )
 
@@ -590,7 +594,7 @@ def draw_grouped_split_violins(
     )
     ax.tick_params(
         axis="x",
-        labelsize=11,
+        labelsize=TICK_LABEL_FONTSIZE,
         labeltop=True,
         labelbottom=False,
         top=False,
@@ -598,7 +602,7 @@ def draw_grouped_split_violins(
         length=0,
         pad=8,
     )
-    ax.tick_params(axis="y", labelsize=11)
+    ax.tick_params(axis="y", labelsize=TICK_LABEL_FONTSIZE)
 
 
 def build_figure(
@@ -607,7 +611,7 @@ def build_figure(
     fig_width = 4.6 + 3.0 * len(metrics_by_experiment)
     fig, ax = plt.subplots(1, 1, figsize=(fig_width, 4.3))
     draw_grouped_split_violins(ax=ax, metrics_by_experiment=metrics_by_experiment)
-    ax.set_ylabel("Hausdorff distance")
+    ax.set_ylabel("Hausdorff distance", fontsize=AXIS_LABEL_FONTSIZE)
 
     legend_handles = [
         Patch(
@@ -622,6 +626,7 @@ def build_figure(
         loc="lower center",
         bbox_to_anchor=(0.5, 0.01),
         ncol=3,
+        fontsize=LEGEND_FONTSIZE,
         frameon=False,
     )
     fig.tight_layout(rect=(0.02, 0.08, 0.98, 0.94))

@@ -18,6 +18,10 @@ OUTPUT_FIGURE = FIGURES_DIR / "fig_gridsearch_primaryschool_limit.pdf"
 DEFAULT_WINDOWS_SECONDS = [120.0, 1800.0, 3600.0]
 DEFAULT_LAMBDAS = np.logspace(-5, 0, 10)
 SELECTED_LAMBDAS = DEFAULT_LAMBDAS[::2]
+PANEL_TITLE_FONTSIZE = 16
+AXIS_LABEL_FONTSIZE = 14
+TICK_LABEL_FONTSIZE = 13
+LEGEND_FONTSIZE = 14
 
 
 def load_metadata(base: Path) -> dict | None:
@@ -152,7 +156,7 @@ def main() -> None:
     selected_lambdas = get_selected_lambdas(signal_metadata)
     colors = auxiliary_functions.generate_plasma_colors(len(selected_lambdas))
 
-    fig, axes = plt.subplots(1, len(windows_seconds), figsize=(14, 5.5), sharey=False)
+    fig, axes = plt.subplots(1, len(windows_seconds), figsize=(15.5, 6.0), sharey=False)
     if len(windows_seconds) == 1:
         axes = [axes]
 
@@ -181,11 +185,12 @@ def main() -> None:
             label="Upper Bound" if panel_idx == 0 else None,
         )
 
-        ax.set_title(window_title(window_seconds))
-        ax.set_xlabel("Time (hours)")
+        ax.set_title(window_title(window_seconds), fontsize=PANEL_TITLE_FONTSIZE)
+        ax.set_xlabel("Time (hours)", fontsize=AXIS_LABEL_FONTSIZE)
+        ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
         ax.set_box_aspect(1)
 
-    axes[0].set_ylabel("Entropy")
+    axes[0].set_ylabel("Entropy", fontsize=AXIS_LABEL_FONTSIZE)
 
     legend_handles = list(axes[0].lines)
     legend_labels = [line.get_label() for line in legend_handles]
@@ -195,7 +200,7 @@ def main() -> None:
         loc="lower center",
         bbox_to_anchor=(0.5, 0.02),
         ncol=len(legend_handles),
-        fontsize="medium",
+        fontsize=LEGEND_FONTSIZE,
         frameon=False,
         borderaxespad=0.0,
     )

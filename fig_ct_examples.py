@@ -28,6 +28,9 @@ from ct_examples_common import (
 plt.style.use(Path(__file__).with_name("paper.mplstyle"))
 
 
+INSET_TITLE_FONTSIZE = 9
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Plot the sparse block-activity figures from saved sample and signal pickles."
@@ -377,7 +380,7 @@ def draw_matrix_insets(
         inset_ax.set_facecolor("white")
         inset_ax.set_xticks([])
         inset_ax.set_yticks([])
-        inset_ax.set_title(f"{start:.0f} <= t < {end:.0f}", fontsize=7)
+        inset_ax.set_title(f"{start:.0f} <= t < {end:.0f}", fontsize=INSET_TITLE_FONTSIZE)
         for spine in inset_ax.spines.values():
             spine.set_visible(True)
             spine.set_linewidth(0.8)

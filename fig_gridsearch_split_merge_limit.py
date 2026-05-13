@@ -37,6 +37,11 @@ LIMIT_STYLE = {
 }
 TIME_INTERVALS = [(0, 100), (100, 200), (200, 300)]
 INSET_POSITIONS = [0.06, 0.37, 0.68]
+PANEL_TITLE_FONTSIZE = 16
+AXIS_LABEL_FONTSIZE = 14
+TICK_LABEL_FONTSIZE = 13
+LEGEND_FONTSIZE = 14
+INSET_TITLE_FONTSIZE = 10
 
 
 def parse_args() -> argparse.Namespace:
@@ -509,8 +514,9 @@ def plot_window_panel(
 
     ax.set_xlim(-5, 310)
     ax.set_ylim(-2, 5)
-    ax.set_xlabel("t [s]")
-    ax.set_title(window_title(window))
+    ax.set_xlabel("t [s]", fontsize=AXIS_LABEL_FONTSIZE)
+    ax.set_title(window_title(window), fontsize=PANEL_TITLE_FONTSIZE)
+    ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
     ax.set_box_aspect(1)
 
     for matrix, pos, (start, end) in zip(matrices, INSET_POSITIONS, TIME_INTERVALS):
@@ -537,7 +543,7 @@ def plot_window_panel(
         inset_ax.set_facecolor("white")
         inset_ax.set_xticks([])
         inset_ax.set_yticks([])
-        inset_ax.set_title(f"{start} ≤ t < {end}", fontsize=8)
+        inset_ax.set_title(f"{start} ≤ t < {end}", fontsize=INSET_TITLE_FONTSIZE)
         for spine in inset_ax.spines.values():
             spine.set_visible(True)
             spine.set_linewidth(0.8)
@@ -588,7 +594,7 @@ def main() -> None:
             inset_cmap=inset_cmap,
         )
 
-    axes[0].set_ylabel("Entropy")
+    axes[0].set_ylabel("Entropy", fontsize=AXIS_LABEL_FONTSIZE)
     for ax in axes[1:]:
         ax.tick_params(labelleft=False)
 
@@ -611,7 +617,7 @@ def main() -> None:
         loc="lower center",
         bbox_to_anchor=(0.5, 0.02),
         ncol=len(legend_handles),
-        fontsize="medium",
+        fontsize=LEGEND_FONTSIZE,
         frameon=False,
         borderaxespad=0.0,
     )
