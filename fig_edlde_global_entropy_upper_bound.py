@@ -224,7 +224,7 @@ def generate_figure(rates, lambdas, network_dir: Path, results_dir: Path, output
             inset_cmap=inset_cmap,
         )
 
-    axes[0].set_ylabel("Conditional Entropy", fontsize=AXIS_LABEL_FONTSIZE)
+    axes[0].set_ylabel("Entropy", fontsize=AXIS_LABEL_FONTSIZE)
     for ax in axes[1:]:
         ax.tick_params(labelleft=False)
 

@@ -174,7 +174,7 @@ def plot_summary(summary: pd.DataFrame, output_path: Path) -> None:
     ax.set_xlim(float(overlaps.min()) - 0.15, float(overlaps.max()) + 0.15)
     ax.set_xticks(overlaps)
     ax.set_xlabel("Overlap Depth")
-    ax.set_ylabel("Final Global Entropy")
+    ax.set_ylabel("Final Entropy Value")
 
     ymin = float(np.nanmin(entropies))
     ymax = float(np.nanmax(np.r_[entropies, upper_bound]))
