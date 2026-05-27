@@ -7,7 +7,7 @@ from pathlib import Path
 
 import time
 
-import compute_S_rate
+from signal_generation import compute_signals_for_lambda
 
 
 # Load network 
@@ -26,93 +26,44 @@ windows = [1, 5, 10, 25]
 
 # Sampling configuration (option 3: uniform in time)
 sample_fraction = 0.1  # e.g. 0.1 = compute ~10% of windows per window-length
+reverse_time = False
 
 
 # Worker
 def worker(lamda: float):
     try:
-        # 1) inter-event matrices for this lamda (needed for window products)
-        #    (Assumes laplacians are already available or computable)
-        #    If your net already has laplacians computed and stored, you can skip compute_laplacian_matrices.
-        if not hasattr(net, "L"):
-            net.compute_laplacian_matrices(
-                t_start=net.times[0],
-                t_stop=net.times[-1],
-                random_walk=False,
-            )
-
-        net.compute_inter_transition_matrices(
+        signals_by_window = compute_signals_for_lambda(
+            net=net,
             lamda=lamda,
-            t_start=net.times[0],
-            t_stop=net.times[-1],
-            dense_expm=False,
-            use_sparse_stoch=False,
-            random_walk=False,
+            windows=windows,
+            sample_fraction=sample_fraction,
+            window_backend="segment_tree",
+            reverse_time=reverse_time,
         )
 
-        p0 = np.ones(net.num_nodes) / net.num_nodes
-
-        # For each window length, sample ks uniformly in time and compute entropy only at those ks (option 3 + 5A)
+        subdir = "window_S_rev" if reverse_time else "window_S"
         for window in windows:
-            # Windows start times that are valid for the chosen window length
-            considered_times = net.times[net.times < net.times[-1] - window]
-            M = len(considered_times)
-            if M <= 0:
-                # No valid windows for this window length
-                continue
-
-            m = max(1, int(np.ceil(sample_fraction * M)))
-
-            # Targets uniformly spaced in time, then mapped to closest k via searchsorted
-            t_targets = np.linspace(float(considered_times[0]), float(considered_times[-1]), m)
-            k_samples = np.searchsorted(considered_times, t_targets, side="left")
-            k_samples = np.clip(k_samples, 0, M - 1)
-            k_samples = np.unique(k_samples).astype(int)
-
-            # Convenience: sampled times (useful to store alongside entropy)
-            t_samples = net.times[k_samples]
-
-            # Preallocate only for sampled points (option 5A)
-            S_arr = np.empty(len(k_samples), dtype=float)
-            k_to_pos = {int(k): i for i, k in enumerate(k_samples)}
-
-            def k_to_idx(k):
-                return k_to_pos[int(k)]
-
-            on_T = compute_S_rate.make_on_window_matrix_entropy_callback_prealloc(p0, S_arr, k_to_idx)
-
-            net.compute_transition_matrices_sliding_timewindow(
-                lamda=lamda,
-                reverse_time=False,
-                window_timelength=window,
-                save_intermediate=False,    # <-- crucial: don't store matrices
-                on_window_matrix=on_T,      # <-- compute/store entropy scalars
-                force_csr=True,
-                k_samples=k_samples,
-                # tol=...,  # add if used
-            )
-
-            S_rate = {
-                "lamda": f"{lamda:.11f}",
-                "window": window,
-                "k_samples": k_samples,
-                "t_samples": t_samples,
-                "signal": S_arr,
-            }
-
-            outdir = base / "window_S" / str(window)
+            signal_result = signals_by_window[float(window)]
+            outdir = base / subdir / str(window)
             outdir.mkdir(parents=True, exist_ok=True)
 
             outfile = outdir / f"window_S{lamda:.11f}"
             with open(outfile, "wb") as f:
-                pickle.dump(S_rate, f)
+                pickle.dump(signal_result, f)
 
     except Exception as e:
         print(f"error with lamda={lamda:.11f}: {type(e).__name__}: {e}")
+        subdir = "window_S_rev" if reverse_time else "window_S"
         for window in windows:
-            outdir = base / "window_S" / str(window)
+            outdir = base / subdir / str(window)
             outdir.mkdir(parents=True, exist_ok=True)
-            S_rate = {"lamda": f"{lamda:.11f}", "window": window, "signal": 10}
+            S_rate = {
+                "lamda": float(lamda),
+                "window": float(window),
+                "signal": 10,
+                "reverse_time": bool(reverse_time),
+                "direction": "backward" if reverse_time else "forward",
+            }
             outfile = outdir / f"window_S{lamda:.11f}"
             with open(outfile, "wb") as f:
                 pickle.dump(S_rate, f)
