@@ -99,13 +99,13 @@ def prepare_full_window_scan(
     return window_plans
 
 
-def compute_component_log_sum(
+def compute_window_component_sizes(
     net: ContTempNetwork,
     start_time: float,
     window_seconds: float,
-) -> float:
+) -> np.ndarray:
     """
-    Compute sum_C (|C| / N) log |C| on the aggregated window graph.
+    Return connected-component sizes on the aggregated window graph.
     """
 
     adjacency = net.compute_static_adjacency_matrix(
@@ -118,10 +118,46 @@ def compute_component_log_sum(
         directed=False,
         return_labels=True,
     )
-    component_sizes = np.bincount(labels, minlength=n_components).astype(float)
+    return np.bincount(labels, minlength=n_components).astype(float)
+
+
+def compute_component_log_sum(
+    net: ContTempNetwork,
+    start_time: float,
+    window_seconds: float,
+) -> float:
+    """
+    Compute sum_C (|C| / N) log |C| on the aggregated window graph.
+    """
+
+    component_sizes = compute_window_component_sizes(
+        net=net,
+        start_time=start_time,
+        window_seconds=window_seconds,
+    )
     weights = component_sizes / float(net.num_nodes)
 
     return float(np.sum(weights * np.log(component_sizes)))
+
+
+def compute_component_lower_bound_sum(
+    net: ContTempNetwork,
+    start_time: float,
+    window_seconds: float,
+) -> float:
+    """
+    Compute sum_C (|C| / N) (2 - 2 / |C|) log(2) on the window graph.
+    """
+
+    component_sizes = compute_window_component_sizes(
+        net=net,
+        start_time=start_time,
+        window_seconds=window_seconds,
+    )
+    weights = component_sizes / float(net.num_nodes)
+    lower_terms = (2.0 - 2.0 / component_sizes) * np.log(2.0)
+
+    return float(np.sum(weights * lower_terms))
 
 
 def compute_window_limit_curve(
@@ -169,6 +205,53 @@ def compute_window_limit_curve(
         # Shape (n_selected_times, 2) with columns [t_sample, component_log_sum].
         "time_component_log_sums": time_limit_array,
         "statistic": "sum((size / N) * log(size)) over connected components",
+    }
+
+
+def compute_window_lower_bound_curve(
+    net: ContTempNetwork,
+    plan: WindowLimitPlan,
+) -> dict:
+    """
+    Compute the connected-component lower-bound statistic for one window length.
+    """
+
+    values = np.empty(len(plan.t_samples), dtype=float)
+    start_times = np.asarray(plan.t_samples, dtype=float) - 0.5 * float(plan.window)
+
+    for idx, start_time in enumerate(start_times):
+        values[idx] = compute_component_lower_bound_sum(
+            net=net,
+            start_time=float(start_time),
+            window_seconds=float(plan.window),
+        )
+
+        if (idx + 1) % 250 == 0 or idx + 1 == len(plan.t_samples):
+            print(
+                f"lower bound, window={int(plan.window)}s: "
+                f"{idx + 1}/{len(plan.t_samples)} samples"
+            )
+
+    time_lower_bound_array = (
+        np.column_stack((plan.t_samples, values))
+        if len(plan.t_samples) > 0
+        else np.empty((0, 2), dtype=float)
+    )
+
+    return {
+        "window": float(plan.window),
+        "window_seconds": float(plan.window),
+        "window_minutes": float(plan.window) / 60.0,
+        "k_samples": np.asarray(plan.k_samples, dtype=int),
+        "t_samples": np.asarray(plan.t_samples, dtype=float),
+        "component_lower_bound_sums": values,
+        "signal": values,
+        "signal_array": values,
+        "time_component_lower_bound_sums": time_lower_bound_array,
+        "statistic": (
+            "sum((size / N) * (2 - 2 / size) * log(2)) "
+            "over connected components"
+        ),
     }
 
 
