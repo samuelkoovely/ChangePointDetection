@@ -20,7 +20,7 @@ from signal_generation import ensure_laplacians
 
 ensure_plotting_env()
 
-from fig_global_entropy import compute_global_limit_payload
+from fig_1 import compute_global_limit_payload
 
 
 def parse_args() -> argparse.Namespace:

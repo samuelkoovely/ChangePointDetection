@@ -11,7 +11,7 @@ import numpy as np
 from matplotlib.lines import Line2D
 
 import auxiliary_functions
-import fig_gridsearch_primaryschool_limit as primaryschool_limit_fig
+import fig_9 as primaryschool_limit_fig
 import primary_school_limit
 
 plt.style.use(Path(__file__).with_name("paper.mplstyle"))

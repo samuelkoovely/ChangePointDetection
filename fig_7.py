@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import to_rgb
 
-from fig_snapshot_experiments_train_test_split_violins import (
+from fig_8 import (
     METHOD_COLORS,
     _clip_violin_half,
     _compute_hausdorff_cap,

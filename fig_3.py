@@ -35,7 +35,7 @@ from matplotlib.lines import Line2D
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 import auxiliary_functions
-from fig_global_entropy import (
+from fig_1 import (
     LIMIT_STYLE,
     compute_interval_matrices,
     extract_limit_array,
