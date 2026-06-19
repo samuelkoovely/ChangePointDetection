@@ -28,9 +28,9 @@ EXPERIMENT_ORDER = (
     "Multi-bkps snapshots",
 )
 EXPERIMENT_DISPLAY_NAMES = {
-    "Block2 snapshots": "Benchmark1",
-    "Block1 snapshots": "Benchmark2",
-    "Multi-bkps snapshots": "Benchmark3",
+    "Block2 snapshots": "ActivityBench",
+    "Block1 snapshots": "CommunityBench",
+    "Multi-bkps snapshots": "MultiBench",
 }
 SNAPSHOT_RESULT_PATHS = {
     "Block2 snapshots": {
