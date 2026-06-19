@@ -134,7 +134,7 @@ python select_primaryschool_interval_partitions.py
 python fig_10.py
 ```
 
-Current repository note: `fig_10.py` imports `fig_entropy_inf_community`, but `fig_entropy_inf_community.py` is not present in the working tree. Restore that source file before expecting `python fig_10.py` to run from a clean checkout.
+`fig_10.py` is self-contained and includes the primary-school community-evolution helpers needed for this panel.
 
 ## Suggested File Organization
 
